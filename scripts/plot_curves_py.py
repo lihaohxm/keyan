@@ -28,11 +28,18 @@ def _load_metrics(run_id: str) -> dict:
         return json.load(f)
 
 
-def _plot_curve(x: np.ndarray, curves: Dict[str, np.ndarray], title: str, ylabel: str, filename: str) -> None:
+def _plot_curve(
+    x: np.ndarray,
+    curves: Dict[str, np.ndarray],
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    filename: str,
+) -> None:
     plt.figure(figsize=(6, 4))
     for label, y in curves.items():
         plt.plot(x, y, marker="o", label=label)
-    plt.xlabel("x")
+    plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.title(title)
     plt.grid(True, alpha=0.3)
@@ -60,18 +67,33 @@ def _plot_pareto(pareto: Dict[str, Dict[str, List[float]]], filename: str) -> No
     plt.close()
 
 
+def _latest_run_id() -> str:
+    candidates = sorted(RESULTS_DIR.glob("*_metrics.json"), key=lambda path: path.stat().st_mtime)
+    if not candidates:
+        raise FileNotFoundError("No metrics JSON files found in results/")
+    return candidates[-1].stem.replace("_metrics", "")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot curves from saved results")
-    parser.add_argument("--run_id", required=True)
+    parser.add_argument("--run_id", default=None)
+    parser.add_argument("--latest", action="store_true", help="Use latest run in results/")
     args = parser.parse_args()
 
-    curves = _load_curves(args.run_id)
-    metrics = _load_metrics(args.run_id)
+    if args.latest:
+        run_id = _latest_run_id()
+    elif args.run_id:
+        run_id = args.run_id
+    else:
+        raise ValueError("Provide --run_id or --latest")
+
+    curves = _load_curves(run_id)
+    metrics = _load_metrics(run_id)
 
     x_name = metrics.get("x_name", "x")
-    x = curves.get("snr_db")
+    x = curves.get("x_axis")
     if x is None:
-        raise ValueError("Expected snr_db column in curves CSV")
+        raise ValueError("Expected x_axis column in curves CSV")
 
     sum_rate_curves = {
         name.replace("sum_rate_", ""): values
@@ -84,12 +106,26 @@ def main() -> None:
         if name.startswith("avg_qoe_")
     }
 
-    _plot_curve(x, sum_rate_curves, f"Sum Rate vs {x_name}", "Sum Rate", f"{args.run_id}_sum_rate.png")
-    _plot_curve(x, qoe_curves, f"Avg QoE vs {x_name}", "Avg QoE", f"{args.run_id}_avg_qoe.png")
+    _plot_curve(
+        x,
+        sum_rate_curves,
+        f"Sum Rate vs {x_name}",
+        x_name,
+        "Sum Rate",
+        f"{run_id}_sum_rate.png",
+    )
+    _plot_curve(
+        x,
+        qoe_curves,
+        f"Avg QoE vs {x_name}",
+        x_name,
+        "Avg QoE",
+        f"{run_id}_avg_qoe.png",
+    )
 
     pareto = metrics.get("pareto")
     if pareto:
-        _plot_pareto(pareto, f"{args.run_id}_pareto.png")
+        _plot_pareto(pareto, f"{run_id}_pareto.png")
     else:
         pareto_curves = {}
         for name, values in curves.items():
@@ -100,7 +136,7 @@ def main() -> None:
                 algo = name.replace("pareto_avg_qoe_", "")
                 pareto_curves.setdefault(algo, {})["avg_qoe"] = values.tolist()
         if pareto_curves:
-            _plot_pareto(pareto_curves, f"{args.run_id}_pareto.png")
+            _plot_pareto(pareto_curves, f"{run_id}_pareto.png")
 
 
 if __name__ == "__main__":
