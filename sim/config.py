@@ -31,18 +31,18 @@ class ChannelConfig:
 
 @dataclass
 class SemanticConfig:
-    method: str = "exp"
+    mode: str = "proxy"
     a: float = 0.8
     b: float = 0.15
-    c: float = 1.0
-    table: dict | None = None
+    table_path: str | None = None
 
 
 @dataclass
 class QoEConfig:
     payload_ratio: float = 1.0
     delay_thresholds_ms: Tuple[float, float] = (10.0, 30.0)
-    semantic_threshold: float = 0.2
+    delay_ratio: float = 0.5
+    distortion_max: float = 0.2
     beta_delay: float = 1.0
     beta_semantic: float = 1.0
     hard_ratio: float = 0.5
@@ -71,3 +71,4 @@ class SimulationConfig:
 
 
 DEFAULT_POWER_DBW: List[float] = [-10.0, -5.0, 0.0]
+DEFAULT_WEIGHT_LIST: List[Tuple[float, float]] = [(0.8, 0.2), (0.5, 0.5), (0.2, 0.8)]
