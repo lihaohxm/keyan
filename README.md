@@ -1,7 +1,5 @@
 # keyan
 
-本仓库提供多 RIS 下行语义通信仿真框架：**MATLAB 负责主仿真**（几何/信道/匹配/SINR/QoE/扫参/画图/落盘），**Python 仅负责离线生成 DeepSC 语义映射表**供 MATLAB 查表插值。
-
 ## 目录结构
 
 ```
@@ -72,7 +70,9 @@ snr_db,M,xi
 -10,16,0.18
 -5,8,0.25
 ```
+gamma 为线性 SINR（不是 dB）
 
+表里的 snr_db 是 dB
 MATLAB 端 `semantic_map` 会读取 CSV 并做二维插值，输入 `snr_db=10*log10(gamma)` 与 `M`，输出 `xi`。
 
 ## 结果输出
@@ -83,8 +83,4 @@ MATLAB 端 `semantic_map` 会读取 CSV 并做二维插值，输入 `snr_db=10*l
 - `results/<run_id>_metrics.json`
 - `results/<run_id>_curves.csv`
 
-MATLAB 画图脚本会输出三类图到 `figures/`：
 
-1. sum-rate vs x
-2. avg QoE vs x
-3. Pareto：sum-rate vs avg QoE
