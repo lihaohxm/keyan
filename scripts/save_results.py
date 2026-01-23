@@ -15,23 +15,23 @@ RESULTS_DIR = Path("results")
 
 def save_run(
     run_id: str,
-    snr_db: Sequence[float],
-    metrics_dict: Mapping[str, float],
+    x_axis: Sequence[float],
+    metrics_dict: Mapping[str, object],
     arrays_dict: Mapping[str, Sequence[float]],
 ) -> None:
     """Save a single run's results in MAT, JSON, and CSV formats.
 
     Args:
         run_id: Identifier for the run (used in filenames).
-        snr_db: Sequence of SNR values in dB.
+        x_axis: Sequence of x-axis values.
         metrics_dict: Scalar metrics to store in JSON.
-        arrays_dict: Curve data keyed by metric name (e.g., ber, bler).
+        arrays_dict: Curve data keyed by metric name.
     """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    snr_db_array = np.asarray(snr_db, dtype=float)
+    x_axis_array = np.asarray(x_axis, dtype=float)
     mat_payload: dict[str, np.ndarray | float | int] = {
-        "snr_db": snr_db_array,
+        "x_axis": x_axis_array,
     }
 
     for key, values in arrays_dict.items():
@@ -43,10 +43,10 @@ def save_run(
         json.dump(metrics_dict, f, indent=2, ensure_ascii=False)
 
     csv_path = RESULTS_DIR / f"{run_id}_curves.csv"
-    header = ["snr_db", *arrays_dict.keys()]
+    header = ["x_axis", *arrays_dict.keys()]
     rows = []
-    for idx, snr_value in enumerate(snr_db_array):
-        row = [snr_value]
+    for idx, x_value in enumerate(x_axis_array):
+        row = [x_value]
         for key in arrays_dict.keys():
             values = np.asarray(arrays_dict[key], dtype=float)
             row.append(values[idx] if idx < len(values) else np.nan)

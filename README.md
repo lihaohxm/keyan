@@ -1,85 +1,89 @@
 # keyan
 
-## 实验结果目录规范
+本仓库提供多 RIS 下行语义通信仿真框架：**MATLAB 负责主仿真**（几何/信道/匹配/SINR/QoE/扫参/画图/落盘），**Python 仅负责离线生成 DeepSC 语义映射表**供 MATLAB 查表插值。
+
+## 目录结构
 
 ```
-results/  # 运行结果输出（.mat/.json/.csv）
-figures/  # 画图输出（例如 BER/BLER 曲线）
-logs/     # 运行日志
-scripts/  # 保存结果的脚本
-matlab/   # MATLAB 绘图脚本
+matlab_sim/          % MATLAB 仿真核心
+matlab_sim/matching/ % RIS 匹配策略
+matlab_experiments/  % MATLAB 实验入口（run_once/sweep/pareto）
+matlab_scripts/      % MATLAB 结果保存与画图
+python_deepsc/       % Python 导出语义映射表（stub）
+semantic_tables/     % DeepSC 导出的 CSV 表
+results/             % 运行结果输出（.mat/.json/.csv）
+figures/             % 画图输出
+logs/                % 运行日志（预留）
 ```
 
-## 保存结果（Python）
+## Python 依赖（仅用于导出语义表）
 
-`scripts/save_results.py` 提供 `save_run` 用于保存单次实验：
-
-```python
-from scripts.save_results import save_run
-
-run_id = "demo_run"
-snr_db = [-2, 0, 2, 4]
-metrics_dict = {"runtime_s": 12.3, "seed": 42}
-arrays_dict = {
-    "ber": [1e-1, 5e-2, 2e-2, 8e-3],
-    "bler": [0.6, 0.35, 0.15, 0.05],
-}
-
-save_run(run_id, snr_db, metrics_dict, arrays_dict)
+```bash
+pip install -r requirements.txt
 ```
 
-输出文件：
+## MATLAB 运行方式（推荐）
 
-- `results/<run_id>_curves.mat`（`scipy.io.savemat`）
+在 MATLAB 命令行（仓库根目录）执行：
+
+**单次仿真**：
+
+```matlab
+matlab_experiments.run_once('seed',1,'mc',20,'p_dbw',-5,'semantic_mode','proxy')
+```
+
+**查表模式**：
+
+```matlab
+matlab_experiments.run_once('seed',1,'mc',20,'p_dbw',-5,'semantic_mode','table','table_path','semantic_tables/deepsc_table.csv')
+```
+
+**扫参**：
+
+```matlab
+matlab_experiments.sweep('seed',1,'mc',100,'semantic_mode','proxy','x','p_dbw')
+```
+
+**Pareto 扫权重**：
+
+```matlab
+matlab_experiments.pareto('seed',1,'mc',100,'semantic_mode','proxy')
+```
+
+**画图**：
+
+```matlab
+matlab_scripts.plot_curves('latest',true)
+```
+
+## Python 生成语义映射表
+
+`python_deepsc/export_semantic_table.py` 默认生成长表格式 CSV：
+
+```bash
+python python_deepsc/export_semantic_table.py --out semantic_tables/deepsc_table.csv
+```
+
+表格格式（长表）：
+
+```csv
+snr_db,M,xi
+-10,8,0.12
+-10,16,0.18
+-5,8,0.25
+```
+
+MATLAB 端 `semantic_map` 会读取 CSV 并做二维插值，输入 `snr_db=10*log10(gamma)` 与 `M`，输出 `xi`。
+
+## 结果输出
+
+每次运行将写入：
+
+- `results/<run_id>_curves.mat`
 - `results/<run_id>_metrics.json`
 - `results/<run_id>_curves.csv`
 
-## 绘图（MATLAB）
-
-`matlab/plot_curves.m` 会读取 `results/<run_id>_curves.mat` 中的 `snr_db`、`ber`、`bler`
-并保存图片到 `figures/`：
-
-```matlab
-% 画指定 run_id
-plot_curves("demo_run");
-
-% 自动扫描 results/ 下所有 *_curves.mat
-plot_curves();
-```
-
-## 多 RIS 语义通信仿真框架
-
-新增的 `sim/` 与 `experiments/` 提供多 RIS 辅助下行语义通信的匹配与 QoE 对比仿真。输出结果复用 `save_run` 落盘到 `results/`，并支持 Python 画图。
-
-### 快速开始（可复制命令）
-
-1. 扫功率生成 curves + metrics：
-
-```bash
-python -m experiments.sweep --x P_dBW --x_list "-10,-5,0" --mc 100 --seed 1 --algos "random,norm,qoe,exhaustive"
-```
-
-2. 生成 Pareto：
-
-```bash
-python -m experiments.pareto --mc 100 --seed 1 --weights "0.8,0.2;0.5,0.5;0.2,0.8" --algos "random,norm,qoe"
-```
-
-3. 画图（Python）：
-
-```bash
-python scripts/plot_curves_py.py --run_id <run_id>
-```
-
-### 结果输出
-
-运行后会在 `results/` 下生成：
-
-- `<run_id>_metrics.json`：包含配置、算法、均值/方差/置信区间、Pareto 点等。
-- `<run_id>_curves.csv`：横轴 + 每算法的 sum-rate 与 avg QoE 曲线。
-- `<run_id>_curves.mat`：与 CSV 字段一致，便于 MATLAB 读取。
-
-Python 画图脚本会输出三类图到 `figures/`：
+MATLAB 画图脚本会输出三类图到 `figures/`：
 
 1. sum-rate vs x
 2. avg QoE vs x
