@@ -1,0 +1,2 @@
+x_val,random_sum_rate,norm_sum_rate,qoe_sum_rate,exhaustive_sum_rate,ga_placeholder_sum_rate,random_avg_qoe,norm_avg_qoe,qoe_avg_qoe,exhaustive_avg_qoe,ga_placeholder_avg_qoe,random_deadline_vio,norm_deadline_vio,qoe_deadline_vio,exhaustive_deadline_vio,ga_placeholder_deadline_vio,random_semantic_vio,norm_semantic_vio,qoe_semantic_vio,exhaustive_semantic_vio,ga_placeholder_semantic_vio
+-10,5.32044e+06,5.29511e+06,5.38087e+06,5.29511e+06,5.26286e+06,2.58997,2.58997,2.58997,2.58997,2.58997,0,0,0,0,0,1,1,1,1,1
