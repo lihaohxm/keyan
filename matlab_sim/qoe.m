@@ -22,8 +22,11 @@ w_s = weights(2);
 rho = cfg.rho;
 
 % 计算时延
+k_proc = 1e-7; % 处理时延系数 (秒/符号)，可根据需要在 config.m 中定义
+T_proc = k_proc .* M; % 推理时延，与模型大小 M 成正比
+
 T_tx_only = rho .* M ./ (cfg.bandwidth * log2(1 + gamma(:) + cfg.eps) + cfg.eps);
-T_tx = T_tx_only + prop_delay(:);
+T_tx = T_tx_only + prop_delay(:) + T_proc; % 加上处理时延
 
 % 计算语义失真
 D = 1 - xi(:);
