@@ -1,0 +1,161 @@
+{
+  "title": "Table I: Simulation Parameters",
+  "description": "完整仿真参数配置表，确保可复现性和物理合理性",
+  
+  "system_parameters": {
+    "num_cells": 1,
+    "K": 12,
+    "L": 4,
+    "k0": 1,
+    "Nt": 4,
+    "N_RIS": 36,
+    "bandwidth_MHz": 1,
+    "description": "单基站、单小区，K=12用户，L=4个RIS，每RIS服务k0=1用户"
+  },
+  
+  "geometry_parameters": {
+    "seed": 2026,
+    "h_bs_m": 10,
+    "r_ris_m": 80,
+    "h_ris_m": 10,
+    "r_ue_min_m": 20,
+    "r_ue_max_m": 150,
+    "h_ue_m": 1.5,
+    "ris_placement": "圆周均匀分布，角度 phi_l = 2π(l-1)/L",
+    "ue_placement": "圆环均匀分布，每次MC重新采样",
+    "mc_rule": "每次MC重新采样UE位置+小尺度衰落；RIS/BS固定位置"
+  },
+  
+  "channel_parameters": {
+    "d0_m": 1,
+    "kappa_dB": -30,
+    "alpha_BU": 4.5,
+    "alpha_BR": 2.2,
+    "alpha_RU": 2.2,
+    "fading_model": "Rayleigh",
+    "large_scale_formula": "zeta = 10^(kappa_dB/10) * (d0/d)^alpha",
+    "small_scale_formula": "h ~ CN(0, zeta * I)"
+  },
+  
+  "noise_parameters": {
+    "sigma2_dBm": -70,
+    "description": "等效干扰+噪声功率 (Interference+Noise)，用于刻画强干扰环境",
+    "note": "非纯热噪声 (N0*B ≈ -114 dBm @ B=1MHz)"
+  },
+  
+  "ris_parameters": {
+    "eta": 0.8,
+    "description": "反射效率，替代旧的ris_gain=1000",
+    "note": "阵列增益由N_RIS相干叠加自然产生，避免双重增益",
+    "phase_modes": ["mm", "align", "random"]
+  },
+  
+  "qoe_parameters": {
+    "proxy_mode": "sigmoid",
+    "proxy_formula": "xi = 1/(1+exp(-c*(gamma_dB-gamma0)))",
+    "proxy_c": 0.6,
+    "proxy_gamma0_dB": 0,
+    "semantic_distortion": "D = 1 - xi",
+    "deadlines_ms": [2, 10],
+    "dmax": 0.30,
+    "beta_d": 0.1,
+    "beta_s": 0.1,
+    "b_d": 10,
+    "b_s": 10,
+    "default_weights": [0.5, 0.5]
+  },
+  
+  "task_parameters": {
+    "default_task_size_bit": 3000,
+    "delay_formula": "T_k = S_k / (B * log2(1 + gamma_k)) + prop_delay_k",
+    "hetero_urllc_task_size_bit": 1500,
+    "hetero_semantic_task_size_bit": 6000
+  },
+  
+  "hetero_user_config": {
+    "urllc_count": 4,
+    "semantic_count": 8,
+    "urllc_weights": [0.8, 0.2],
+    "urllc_deadline_ms": 2,
+    "urllc_task_size_bit": 1500,
+    "semantic_weights": [0.2, 0.8],
+    "semantic_deadline_ms": 10,
+    "semantic_task_size_bit": 6000
+  },
+  
+  "ga_parameters": {
+    "ga_lite": {
+      "Np": 5,
+      "Niter": 1,
+      "description": "实时配置"
+    },
+    "ga_strong": {
+      "Np": 30,
+      "Niter": 20,
+      "mc_reduction": 100,
+      "description": "离线参考上界"
+    }
+  },
+  
+  "experiment_configs": {
+    "sweep": {
+      "p_dbw_range": [-25, -5],
+      "num_points": 8,
+      "mc": 200,
+      "algorithms": ["random", "norm", "proposed", "ga-lite", "ga-strong"]
+    },
+    "heterogeneous": {
+      "K": 12,
+      "L": 4,
+      "p_dbw_range": [-25, -5],
+      "num_points": 8,
+      "mc": 200
+    },
+    "scarcity": {
+      "K_values": [4, 6, 8, 10, 12, 14, 16],
+      "L": 4,
+      "k0": 1,
+      "p_dbw": -10,
+      "mc": 200
+    },
+    "constraint": {
+      "p_dbw_range": [-25, -5],
+      "num_points": 8,
+      "mc": 200,
+      "phase_modes_comparison": true,
+      "output": "delay_violation_rate"
+    },
+    "ris_count": {
+      "L_values": [2, 3, 4, 5, 6, 7, 8, 10],
+      "K": 6,
+      "k0": 1,
+      "p_dbw": -15,
+      "mc": 200
+    },
+    "ga_convergence": {
+      "Niter_values": [1, 2, 5, 10, 20],
+      "mc": 50,
+      "p_dbw": -15,
+      "output": "dual_axis_plot"
+    }
+  },
+  
+  "output_figures": [
+    "sweep_*_avg_qoe.png",
+    "sweep_*_sum_rate.png",
+    "hetero_*_avg_qoe.png",
+    "hetero_*_urllc_qoe.png",
+    "scarcity_*_avg_qoe.png",
+    "constraint_*_avg_qoe.png",
+    "ris_count_*_avg_qoe.png",
+    "ga_convergence_*.png"
+  ],
+  
+  "algorithms": {
+    "random": "随机分配 baseline",
+    "norm": "基于信道范数的传统方案 (rate-oriented)",
+    "proposed": "QoE感知贪婪匹配 (本文方法)",
+    "ga-lite": "轻量GA (Np=5, Niter=1, 实时)",
+    "ga-strong": "强GA (Np=30, Niter=20, 离线上界)"
+  }
+}

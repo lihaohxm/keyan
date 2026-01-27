@@ -1,0 +1,6 @@
+x_val,random_sum_rate,norm_sum_rate,qoe_sum_rate,exhaustive_sum_rate,ga_sum_rate,random_avg_qoe,norm_avg_qoe,qoe_avg_qoe,exhaustive_avg_qoe,ga_avg_qoe,random_deadline_vio,norm_deadline_vio,qoe_deadline_vio,exhaustive_deadline_vio,ga_deadline_vio,random_semantic_vio,norm_semantic_vio,qoe_semantic_vio,exhaustive_semantic_vio,ga_semantic_vio
+-20,4.63421e+06,5.26183e+06,5.26183e+06,5.29361e+06,5.25886e+06,2.85998,2.5946,2.5946,2.59389,2.59397,0.0333333,0,0,0,0,1,1,1,1,1
+-15,4.11952e+06,5.77105e+06,5.77105e+06,5.77719e+06,5.6982e+06,2.99515,2.59328,2.59328,2.59379,2.59407,0.05,0,0,0,0,1,1,1,1,1
+-10,4.32358e+06,5.23951e+06,5.23951e+06,5.58002e+06,5.74318e+06,2.59375,2.59436,2.59436,2.59387,2.5931,0,0,0,0,0,1,1,1,1,1
+-5,4.61425e+06,5.62205e+06,5.62205e+06,5.24413e+06,5.29263e+06,2.59323,2.59408,2.59408,2.59442,2.5944,0,0,0,0,0,1,1,1,1,1
+0,4.50807e+06,5.61728e+06,5.61728e+06,6.13975e+06,5.81061e+06,2.59472,2.59388,2.59388,2.59278,2.59327,0,0,0,0,0,1,1,1,1,1
