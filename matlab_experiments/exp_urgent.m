@@ -42,7 +42,7 @@ function run_id = exp_urgent(varargin)
     cfg.num_ris = 4;
     
     % 紧迫场景专用参数
-    cfg.n_ris = 36;        % RIS元素数量: 36
+    cfg.n_ris = 64;        % RIS元素数量: 36
     cfg.dmax = 0.30;       % 语义失真阈值: D<=0.30, 即 xi>=0.70
     
     % 紧迫用户数量
@@ -313,7 +313,7 @@ end
 function prop_delay = calc_prop_delay(assign, geom)
     num_users = numel(assign);
     prop_delay = zeros(num_users, 1);
-    prop_delay_factor = 1e-5;
+    prop_delay_factor = 1e-7;
     
     if isempty(geom) || ~isfield(geom, 'ris') || ~isfield(geom, 'ue')
         return;
