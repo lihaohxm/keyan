@@ -23,7 +23,7 @@ p_watts = 10.^(p_dbw / 10);
 p_k = p_watts / num_users;
 
 ris_gain = cfg.ris_gain;
-prop_delay_factor = 1e-5;
+prop_delay_factor = 1e-7;
 
 w_d = weights(1);
 w_s = weights(2);
@@ -68,11 +68,17 @@ for k = 1:num_users
             end
         end
         
-        g = norm(h_eff).^2;
+       g = norm(h_eff).^2;
         gamma_val = p_k * g / (cfg.noise_watts + cfg.eps);
         
         T_tx_only = rho * M / (cfg.bandwidth * log2(1 + gamma_val + cfg.eps) + cfg.eps);
-        T_tx = T_tx_only + prop_delay;
+        
+        % [Added] Add processing delay (Inference time)
+        k_proc = 1e-7;       % Coefficient: seconds per symbol (e.g., 0.1ms)
+        T_proc = k_proc * M; % Inference delay proportional to model size M
+        
+        % [Modified] Total Time = Transmission + Propagation + Processing
+        T_tx = T_tx_only + prop_delay + T_proc;
         
         xi = semantic_map(gamma_val, M, semantic_mode, table_path, struct());
         D = 1 - xi;
@@ -90,16 +96,19 @@ for k = 1:num_users
     end
 end
 
-% ==================== 贪婪分配：每步选最优配对 ====================
+% ==================== 贪婪分配：每步选最优配对 (修改版: 最大收益优先) ====================
 capacity = cfg.k0 * ones(num_ris, 1);
-assign = zeros(num_users, 1);  % 0表示未分配
+assign = zeros(num_users, 1);  % 0表示未分配(即直连)
 assigned = false(num_users, 1);
 
-% 迭代K轮，每轮分配一个用户
+% 预先计算基准Cost (直连Cost)
+base_cost = cost(:, 1);
+
+% 迭代K轮，每轮尝试为一个用户找到最佳RIS（如果有正收益）
 for iter = 1:num_users
     best_k = 0;
     best_l = 0;
-    best_cost = inf;
+    best_gain = -inf;  % 关键修改：寻找最大收益，而非最小代价
     
     % 遍历所有未分配的用户
     for k = 1:num_users
@@ -107,20 +116,30 @@ for iter = 1:num_users
             continue;
         end
         
-        % 检查直连选项
-        if cost(k, 1) < best_cost
-            best_k = k;
-            best_l = 0;
-            best_cost = cost(k, 1);
+        % 计算该用户如果使用RIS能带来的最大收益
+        % 默认收益是0 (保持直连)
+        current_user_best_gain = -inf;
+        current_user_best_l = 0;
+        
+        for l = 1:num_ris
+            if capacity(l) > 0
+                % 收益 = 直连Cost - RIS辅助Cost
+                % (值越大，说明RIS对该用户越重要，即"雪中送炭")
+                gain = base_cost(k) - cost(k, l + 1);
+                
+                if gain > current_user_best_gain
+                    current_user_best_gain = gain;
+                    current_user_best_l = l;
+                end
+            end
         end
         
-        % 检查所有有容量的RIS
-        for l = 1:num_ris
-            if capacity(l) > 0 && cost(k, l + 1) < best_cost
-                best_k = k;
-                best_l = l;
-                best_cost = cost(k, l + 1);
-            end
+        % 全局比较：如果该用户的最佳收益比当前全局最佳收益还大，则选中该用户
+        % 注意：只考虑正收益 (gain > 0)。如果收益为负，说明用RIS反而更差，不如直连。
+        if current_user_best_gain > best_gain && current_user_best_gain > 0
+            best_gain = current_user_best_gain;
+            best_k = k;
+            best_l = current_user_best_l;
         end
     end
     
@@ -128,10 +147,10 @@ for iter = 1:num_users
     if best_k > 0
         assign(best_k) = best_l;
         assigned(best_k) = true;
-        if best_l > 0
-            capacity(best_l) = capacity(best_l) - 1;
-        end
+        capacity(best_l) = capacity(best_l) - 1;
+    else
+        % 如果没有找到任何能产生正收益的配对，或者RIS已满，提前结束
+        % 剩下的用户保持 assign=0 (直连)
+        break;
     end
-end
-
 end
