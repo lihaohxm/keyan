@@ -1,0 +1,247 @@
+name,class,which_path
+D,not_found,
+F,not_found,
+G,not_found,
+H_ris,not_found,
+M,file_or_class,
+M_k,not_found,
+Qd_mean_all,not_found,
+Qs_mean_all,not_found,
+RIS,not_found,
+Rate,not_found,
+Ratio,not_found,
+Summary,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\datafun\summary.m
+T_tx,not_found,
+V_p,not_found,
+abs,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\abs)
+addParameter,not_found,D:\apply\MATLAB R2025\toolbox\mbc\mbcdata\@cgoptimoptions\addParameter.m
+addpath,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\general\addpath.m
+all,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\ops\all)
+angle,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\elfun\angle.m
+any,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\ops\any)
+ao_init_assign,not_found,
+arg7,not_found,
+assign,not_found,D:\apply\MATLAB R2025\toolbox\mbc\mbcdata\@cgoppoint\assign.m
+assign_cand,not_found,
+assign_fixed,not_found,
+assign_tmp,not_found,
+assigned,not_found,
+avail,not_found,
+avg_qoe_all,not_found,
+best_gain,not_found,
+bs,not_found,
+bs_pos,not_found,
+c,not_found,variable
+c1,not_found,
+c2,not_found,
+can_use_ris,not_found,
+cands,not_found,
+cap,not_found,
+capacity,not_found,
+cell,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datatypes\cell\cell)
+char,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\strfun\char)
+child,not_found,
+choice,not_found,
+choices,not_found,
+ci,not_found,
+ci95,not_found,
+close,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\close.p
+colors,not_found,
+conj,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\conj)
+cos,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\cos)
+cost_matrix,not_found,
+covered,not_found,
+d_k,not_found,
+d_vec,not_found,
+datestr,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\timefun\datestr.m
+deadlines,not_found,
+delay_vio_vec,not_found,
+denom_c_vec,not_found,
+denom_p_vec,not_found,
+diag,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\diag)
+dmax_k,not_found,
+dmax_vec,not_found,
+double,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datatypes\double)
+e_c,not_found,
+e_p,not_found,
+error,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\lang\error)
+errorbar,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\specgraph\errorbar.m
+exist,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\lang\exist)
+exp,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\exp)
+eye,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\eye)
+false,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\false)
+fclose,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\io\filesystem\fclose)
+fieldnames,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datatypes\struct\fieldnames)
+figure,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\figure)
+fileparts,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\io\filesystem\fileparts.m
+fileread,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\io\filesystem\fileread.m
+find,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\find)
+fit,file_or_class,D:\apply\MATLAB R2025\toolbox\curvefit\curvefit\fit.m
+floor,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\floor)
+fopen,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\io\filesystem\fopen)
+fprintf,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\io\filesystem\fprintf)
+fullfile,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\io\filesystem\fullfile.m
+ga_rt_budget_target_all,not_found,
+ga_rt_eval_calls_all,not_found,
+gain_delta,not_found,
+gains,not_found,
+gamma_c,not_found,
+gamma_p,not_found,
+gamma_sem,not_found,
+gq,not_found,
+griddedInterpolant,file_or_class,griddedInterpolant is a built-in method
+h_d,not_found,
+h_eff,not_found,
+hard_mask,not_found,
+height,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\elmat\height.m
+histBest,not_found,
+idx,not_found,
+injected,not_found,
+iscell,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datatypes\cell\iscell)
+isempty,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\isempty)
+isequal,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\isequal)
+isfield,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datatypes\struct\isfield)
+isfinite,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\isfinite)
+isinf,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\isinf)
+islogical,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datatypes\islogical)
+ismember,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\ops\ismember.m
+isnan,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\isnan)
+isnumeric,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datatypes\isnumeric)
+isrow,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\isrow)
+isscalar,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\isscalar)
+isstring,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\strfun\isstring)
+isstruct,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datatypes\struct\isstruct)
+jsondecode,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\external\interfaces\json\jsondecode)
+jsonencode,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\external\interfaces\json\jsonencode)
+legend,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\scribe\legend.m
+lines,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\color\lines.m
+linspace,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\elmat\linspace.m
+load,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\general\load)
+log10,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\log10)
+log2,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\log2)
+logical,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datatypes\logical)
+lower,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\strfun\lower)
+m_vals,not_found,
+mat2str,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\strfun\mat2str.m
+mating_pool,not_found,
+max,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datafun\max)
+mean,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\datafun\mean.m
+mfilename,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\lang\mfilename)
+min,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datafun\min)
+mkdir,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\io\filesystem\mkdir)
+mod,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\mod)
+mu,file_or_class,D:\apply\MATLAB R2025\toolbox\robust\rctobsolete\mutools\commands\mu.m
+n_sym,not_found,
+nan,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\nan)
+norm,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\matfun\norm)
+normal_idx,not_found,
+normal_qoe_all,not_found,
+numel,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\numel)
+offspring,not_found,
+onCleanup,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\lang\onCleanup.m
+ones,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\ones)
+opts,not_found,
+order,not_found,D:\apply\MATLAB R2025\toolbox\mbc\mbcmodels\@localmod\order.m
+outer,not_found,
+p,not_found,
+p1,not_found,
+p2,not_found,
+p_list,not_found,
+parse,not_found,D:\apply\MATLAB R2025\toolbox\mbc\mbcexpr\@cgslparser\parse.m
+plot,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\graph2d\plot)
+plot_idx,not_found,
+pop,not_found,
+pow_direct,not_found,
+pow_ris,not_found,
+prop_delay,not_found,
+proposed_assign,not_found,
+proposed_eval_calls_all,not_found,
+qoe_history,not_found,
+qoe_vec,not_found,
+quantile,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\datafun\quantile.m
+rand,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\randfun\rand)
+randi,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\randfun\randi)
+randn,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\randfun\randn)
+randperm,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\randfun\randperm)
+rate_bps,not_found,
+rate_total_bps,not_found,
+rate_vec_bps,not_found,
+readtable,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\io\tabular\iofun\readtable.m
+real,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\real)
+repmat,builtin,D:\apply\MATLAB R2025\toolbox\matlab\elmat\repmat.m
+reshape,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\reshape)
+ris,not_found,
+ris_count_all,not_found,
+ris_list,not_found,
+ris_pos,not_found,
+ris_rank,not_found,
+ris_users,not_found,
+rng,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\randfun\rng.m
+round,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\round)
+save,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\general\save)
+saveas,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\general\saveas.m
+seed_assignment,not_found,
+semantic_vio_vec,not_found,
+setdiff,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\ops\setdiff.m
+sgtitle,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\graph2d\sgtitle.m
+sin,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\sin)
+size,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\size)
+snr_db,not_found,
+snr_range,not_found,
+snr_vals,not_found,
+sort,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datafun\sort)
+sortIdx,not_found,
+sorted_fit,not_found,
+sqrt,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elfun\sqrt)
+std,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\datafun\std.m
+strcmp,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\strfun\strcmp)
+strcmpi,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\strfun\strcmpi)
+string,file_or_class,string is a built-in method
+strings,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\strfun\strings)
+strtrim,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\strfun\strtrim)
+struct,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datatypes\struct\struct)
+subplot,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\graph2d\subplot.m
+sum,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\datafun\sum)
+sum_rate_all,not_found,
+sum_rate_history,not_found,
+theta,not_found,
+theta_all,not_found,
+theta_new,not_found,
+theta_prev,not_found,
+theta_ref,not_found,
+theta_try,not_found,
+title,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\axis\title.m
+u_c,not_found,
+u_p,not_found,
+ue,file_or_class,
+ue_pos,not_found,
+unique,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\ops\unique.m
+urgent_avg_rate_all,not_found,
+urgent_delay_vio_all,not_found,
+urgent_idx,not_found,
+urgent_mask,not_found,
+urgent_qoe_all,not_found,
+urgent_sector,not_found,
+urgent_semantic_vio_all,not_found,
+urgent_sum_rate_all,not_found,
+user_type,not_found,
+users,not_found,
+users_l,not_found,
+ut,not_found,
+valid_ris,not_found,
+w_c,not_found,
+w_p,not_found,
+warm_assign,not_found,
+weights,not_found,D:\apply\MATLAB R2025\toolbox\bioinfo\bioinfo\@phytree\weights.m
+x,not_found,
+xi,not_found,
+xi_grid,not_found,
+xlabel,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\axis\xlabel.m
+xq,not_found,
+xtickangle,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\graph3d\xtickangle.m
+xticklabels,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\graph3d\xticklabels.m
+xticks,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\graph3d\xticks.m
+y_mean,not_found,
+ylabel,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\axis\ylabel.m
+ylim,file_or_class,D:\apply\MATLAB R2025\toolbox\matlab\graphics\graphics\graph3d\ylim.m
+zeros,builtin,built-in (D:\apply\MATLAB R2025\toolbox\matlab\elmat\zeros)

@@ -1,0 +1,2 @@
+SMOKE_FAIL: 未定义与 'struct' 类型的输入参数相对应的函数 'get_rate_vec_bps_compat'。
+  at D:\down\code\risqoe\main\matlab_experiments\paper_sweep_power.m:149

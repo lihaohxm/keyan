@@ -1,0 +1,22 @@
+=== matlab_experiments/paper_run_all.m ===
+L66 C10  DATST
+L24314 C35758 不要使用 'datestr'。请对代码进行相应更改后改用 'datetime'。 L66 C18  TNOW1
+L24314 C35758 不要使用 'now'。请对代码进行相应更改后改用 'datetime("now")'。 === matlab_experiments/paper_sweep_power.m ===
+L163 C48 2 LOGSUM
+L35831 C32771 虑对逻辑向量使用 'nnz' 而不是 'sum' 来提高可读性。 L321 C9  STRNU
+L27492 C21464 量(显然是结构体)已更改，但其值可能未使用。 L459 C36 ' INUSD
+L21487 C33021 未使用输入参数。请考虑改用 ~ 替换该参数。 L511 C14 $ DEFNU
+L21487 C33021 未使用函数。 L524 C16 % DEFNU
+L21487 C33021 未使用函数。 L545 C18 + DEFNU
+L21487 C33021 未使用函数。 === matlab_experiments/paper_sweep_ris_count.m ===
+L126 C48 2 LOGSUM
+L35831 C32771 虑对逻辑向量使用 'nnz' 而不是 'sum' 来提高可读性。 L224 C35 & INUSD
+L21487 C33021 未使用输入参数。请考虑改用 ~ 替换该参数。 L285 C9  STRNU
+L27492 C21464 量(显然是结构体)已更改，但其值可能未使用。 L452 C23 ( DEFNU
+L21487 C33021 未使用函数。 L464 C14 $ DEFNU
+L21487 C33021 未使用函数。 L498 C18 + DEFNU
+L21487 C33021 未使用函数。 === matlab_sim/evaluate_system_rsma.m ===
+L173 C8  ISCL
+L35201 C25552 高性能，请使用 'isscalar' 而不是长度比较。 === matlab_sim/ua_qoe_ao.m ===
+L10 C1  NASGU
+L36171 C32473 变量的值可能未使用。 

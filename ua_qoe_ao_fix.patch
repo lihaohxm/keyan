@@ -1,0 +1,943 @@
+--- matlab_sim/matching/qoe_aware.m
++++ matlab_sim/matching/qoe_aware.m
+@@ -1,9 +1,12 @@
+-function assign = qoe_aware(cfg, ch, p_dbw, semantic_mode, table_path, weights, geom, profile)
++function assign = qoe_aware(cfg, ch, p_dbw, semantic_mode, table_path, weights, geom, profile, sol_ref)
+ %QOE_AWARE QoE-aware RIS-UE assignment via QoE-gain matching.
+ %
+ % Compatible inputs:
+ %   weights: 1x2 or Kx2
+ %   profile (optional struct): use profile.weights/profile.d_k/profile.dmax_k/profile.M_k
++%   sol_ref (optional struct): if provided (with fields V, theta_all, assign),
++%       compute QoE gains using the *same* RSMA+RIS configuration via
++%       evaluate_system_rsma (paper-consistent gain table).
+ 
+ if nargin < 6 || isempty(weights)
+     weights = cfg.weights(1, :);
+@@ -14,6 +17,9 @@
+ if nargin < 8
+     profile = [];
+ end
++if nargin < 9
++    sol_ref = [];
++end
+ 
+ K = cfg.num_users;
+ L = cfg.num_ris;
+@@ -25,6 +31,53 @@
+ profile = build_local_profile(cfg, weights, profile);
+ sem_params = local_semantic_params(cfg);
+ 
++% ------------------------------
++% Full-evaluation gain table (paper-consistent):
++% Keep (V, theta_all) fixed and compute per-user QoE costs for
++%   - direct: assign(k)=0
++%   - RIS l:  assign(k)=l
++% with other users held at sol_ref.assign.
++% ------------------------------
++use_full = true;
++if isfield(cfg, 'ao_match_full') && ~cfg.ao_match_full
++    use_full = false;
++end
++
++if use_full && ~isempty(sol_ref) && isstruct(sol_ref) && isfield(sol_ref, 'V') && isfield(sol_ref, 'theta_all')
++    assign_ref = zeros(K, 1);
++    if isfield(sol_ref, 'assign') && ~isempty(sol_ref.assign)
++        assign_ref = sol_ref.assign(:);
++    end
++    assign_ref = enforce_capacity_local(assign_ref, L, k0);
++
++    eval_opts = struct('semantic_mode', semantic_mode, 'table_path', table_path);
++    cost_matrix = zeros(K, L + 1);
++
++    % Baseline: force user k to be direct (others fixed)
++    for k = 1:K
++        assign_tmp = assign_ref;
++        assign_tmp(k) = 0;
++        sol_tmp = struct('assign', assign_tmp, 'theta_all', sol_ref.theta_all, 'V', sol_ref.V);
++        out_tmp = evaluate_system_rsma(cfg, ch, geom, sol_tmp, profile, eval_opts);
++        cost_matrix(k, 1) = out_tmp.qoe_vec(k);
++    end
++
++    % Candidate RIS: force user k to RIS l (others fixed)
++    for l = 1:L
++        for k = 1:K
++            assign_tmp = assign_ref;
++            assign_tmp(k) = l;
++            sol_tmp = struct('assign', assign_tmp, 'theta_all', sol_ref.theta_all, 'V', sol_ref.V);
++            out_tmp = evaluate_system_rsma(cfg, ch, geom, sol_tmp, profile, eval_opts);
++            cost_matrix(k, l + 1) = out_tmp.qoe_vec(k);
++        end
++    end
++
++    gain_delta = cost_matrix(:, 1) - cost_matrix(:, 2:end);
++    assign = gain_matching(gain_delta, k0);
++    return;
++end
++
+ % cost_matrix(k, l+1): user k cost with direct(l=0) / RIS l>=1
+ cost_matrix = zeros(K, L + 1);
+ 
+@@ -76,7 +129,15 @@
+ % Gain: positive means RIS is better than direct
+ gain_delta = cost_matrix(:, 1) - cost_matrix(:, 2:end);
+ 
+-% One-to-many matching (same structure as current implementation)
++assign = gain_matching(gain_delta, k0);
++
++end
++
++function assign = gain_matching(gain_delta, k0)
++%GAIN_MATCHING One-to-many matching with capacity and gain replacement.
++K = size(gain_delta, 1);
++L = size(gain_delta, 2);
++
+ assign = zeros(K, 1);
+ capacity = k0 * ones(L, 1);
+ assigned = false(K, 1);
+@@ -148,7 +209,17 @@
+         assign(k) = 0;
+     end
+ end
++end
+ 
++function assign = enforce_capacity_local(assign, L, k0)
++assign = assign(:);
++for l = 1:L
++    idx = find(assign == l);
++    if numel(idx) > k0
++        drop_idx = idx((k0 + 1):end);
++        assign(drop_idx) = 0;
++    end
++end
+ end
+ 
+ function profile = build_local_profile(cfg, weights, profile_in)
+--- matlab_sim/rsma_wmmse.m
++++ matlab_sim/rsma_wmmse.m
+@@ -1,137 +1,179 @@
+-function [V, c, rates, sum_rate, gamma_c, gamma_p] = rsma_wmmse(cfg, h_eff, p_dbw, weights, max_iter)
+-%RSMA_WMMSE 严格单层 RSMA 波束成形更新 (基于 QoE 权重)
+-%
+-% 实现论文 3.2 节算法：
+-%   - 变量: v_c (公共预编码), v_k (私有预编码), c_k (公共速率分配)
+-%   - 目标: 最大化 sum(w_k * (R_k_private + c_k))
+-%
+-% 输入:
+-%   h_eff   - 等效信道 (nt x num_users)
+-%   p_dbw   - 发射功率 (dBW)
+-%   weights - QoE 权重链式求导得到的权重 (num_users x 1)
+-%
+-% 输出:
+-%   V        - {v_c, v_k} 预编码集合
+-%   c        - 公共速率分配向量
+-%   sum_rate - 系统总速率 (包含公共+私有)
+-
+-num_users = size(h_eff, 2);
+-nt = cfg.nt;
+-p_watts = 10.^(p_dbw / 10);
+-noise_power = cfg.noise_watts;
+-
+-if nargin < 4 || isempty(weights)
+-    weights = ones(num_users, 1);
+-end
+-if nargin < 5
+-    max_iter = 10;
+-end
+-
+-% 1. 初始化波束 (MRT)
+-v_c = sum(h_eff, 2); 
+-v_c = v_c / (norm(v_c) + cfg.eps) * sqrt(p_watts * 0.2); % 20% 功率给公共流
+-V_p = h_eff; 
+-for k = 1:num_users
+-    V_p(:, k) = V_p(:, k) / (norm(V_p(:, k)) + cfg.eps) * sqrt(p_watts * 0.8 / num_users);
+-end
+-
+-% 初始化接收器、权重、速率分配
+-u_c = zeros(num_users, 1);
+-u_p = zeros(num_users, 1);
+-w_c = zeros(num_users, 1);
+-w_p = zeros(num_users, 1);
+-c = (1/num_users) * ones(num_users, 1); 
+-
+-% 迭代更新
+-for iter = 1:max_iter
+-    % --- Step A: 更新 MMSE 接收器 u ---
+-    for k = 1:num_users
+-        hk = h_eff(:, k);
+-        % 公共流
+-        denom_c = abs(hk' * v_c)^2 + sum(abs(hk' * V_p).^2) + noise_power;
+-        u_c(k) = (hk' * v_c) / (denom_c + cfg.eps);
+-        % 私有流
+-        denom_p = sum(abs(hk' * V_p).^2) + noise_power;
+-        u_p(k) = (hk' * V_p(:, k)) / (denom_p + cfg.eps);
+-    end
+-    
+-    % --- Step B: 更新 MSE 权重 w ---
+-    e_c = zeros(num_users, 1);
+-    e_p = zeros(num_users, 1);
+-    for k = 1:num_users
+-        hk = h_eff(:, k);
+-        e_c(k) = 1 - abs(u_c(k)' * hk' * v_c);
+-        e_p(k) = 1 - abs(u_p(k)' * hk' * V_p(:, k));
+-        w_c(k) = 1 / (max(e_c(k), 1e-10));
+-        w_p(k) = 1 / (max(e_p(k), 1e-10));
+-    end
+-    
+-    % --- Step C: 更新预编码 V (闭式解/二次规划) ---
+-    % 构造公共流预编码相关矩阵 A_common
+-    A_common = zeros(nt, nt);
+-    for i = 1:num_users
+-        hi = h_eff(:, i);
+-        A_common = A_common + weights(i) * w_c(i) * abs(u_c(i))^2 * (hi * hi');
+-    end
+-    % 构造私有流预编码相关矩阵 A_p
+-    A_p = cell(num_users, 1);
+-    for k = 1:num_users
+-        Ak = zeros(nt, nt);
+-        for i = 1:num_users
+-            hi = h_eff(:, i);
+-            % 私有流预编码 v_k 对所有用户 i 解码公共流时的干扰
+-            Ak = Ak + weights(i) * w_c(i) * abs(u_c(i))^2 * (hi * hi');
+-            % 对用户 i 解码自己私有流时的贡献/干扰
+-            Ak = Ak + weights(i) * w_p(i) * abs(u_p(i))^2 * (hi * hi');
+-        end
+-        A_p{k} = Ak;
+-    end
+-    
+-    % 简单的拉格朗日乘子 mu 搜索 (二分法或定步长)
+-    mu = 1e-6; 
+-    for search = 1:10
+-        % 更新 v_c
+-        sum_vec_c = zeros(nt, 1);
+-        for i = 1:num_users
+-            sum_vec_c = sum_vec_c + weights(i) * w_c(i) * conj(u_c(i)) * h_eff(:, i);
+-        end
+-        v_c = (A_common + mu * eye(nt)) \ sum_vec_c;
+-        
+-        % 更新 v_k
+-        for k = 1:num_users
+-            V_p(:, k) = (A_p{k} + mu * eye(nt)) \ (weights(k) * w_p(k) * conj(u_p(k)) * h_eff(:, k));
+-        end
+-        
+-        % 检查功率约束
+-        current_p = norm(v_c)^2 + sum(sum(abs(V_p).^2));
+-        if current_p > p_watts
+-            mu = mu * 2;
+-        else
+-            break;
+-        end
+-    end
+-end
+-
+-% 计算最终速率
+-gamma_c = zeros(num_users, 1);
+-gamma_p = zeros(num_users, 1);
+-for k = 1:num_users
+-    hk = h_eff(:, k);
+-    gamma_c(k) = abs(hk' * v_c)^2 / (sum(abs(hk' * V_p).^2) + noise_power + cfg.eps);
+-    gamma_p(k) = abs(hk' * V_p(:, k))^2 / (sum(abs(hk' * V_p(:, setdiff(1:num_users, k))).^2) + noise_power + cfg.eps);
+-end
+-
+-R_c_limit = cfg.bandwidth * log2(1 + min(gamma_c) + cfg.eps);
+-R_p = cfg.bandwidth * log2(1 + gamma_p + cfg.eps);
+-
+-% 公共速率分配 c (按权重分配)
+-total_weight = sum(weights);
+-c = (weights(:) / (total_weight + cfg.eps)) * R_c_limit;
+-
+-rates = R_p + c;
+-sum_rate = sum(rates);
+-
+-V.v_c = v_c;
+-V.V_p = V_p;
+-V.c = c;
++function [V, c, rates, sum_rate, gamma_c, gamma_p] = rsma_wmmse(cfg, h_eff, p_dbw, weights, max_iter)
++%RSMA_WMMSE 严格单层 RSMA 波束成形更新 (基于 QoE 权重)
++%
++% 实现论文 3.2 节算法：
++%   - 变量: v_c (公共预编码), v_k (私有预编码), c_k (公共速率分配)
++%   - 目标: 最大化 sum(w_k * (R_k_private + c_k))
++%
++% 输入:
++%   h_eff   - 等效信道 (nt x num_users)
++%   p_dbw   - 发射功率 (dBW)
++%   weights - QoE 权重链式求导得到的权重 (num_users x 1)
++%
++% 输出:
++%   V        - {v_c, v_k} 预编码集合
++%   c        - 公共速率分配向量
++%   sum_rate - 系统总速率 (包含公共+私有)
++
++num_users = size(h_eff, 2);
++nt = cfg.nt;
++p_watts = 10.^(p_dbw / 10);
++noise_power = cfg.noise_watts;
++
++if nargin < 4 || isempty(weights)
++    weights = ones(num_users, 1);
++end
++
++% Ensure column vector and normalize scale for numerical stability.
++if isrow(weights)
++    weights = weights';
++end
++m_w = mean(weights);
++if ~isfinite(m_w) || m_w <= cfg.eps
++    weights = ones(num_users, 1);
++else
++    weights = weights / (m_w + cfg.eps);
++end
++if nargin < 5
++    max_iter = 10;
++end
++
++% 1. 初始化波束 (MRT)
++v_c = sum(h_eff, 2); 
++v_c = v_c / (norm(v_c) + cfg.eps) * sqrt(p_watts * 0.2); % 20% 功率给公共流
++V_p = h_eff; 
++for k = 1:num_users
++    V_p(:, k) = V_p(:, k) / (norm(V_p(:, k)) + cfg.eps) * sqrt(p_watts * 0.8 / num_users);
++end
++
++% 初始化接收器、权重、速率分配
++u_c = zeros(num_users, 1);
++u_p = zeros(num_users, 1);
++w_c = zeros(num_users, 1);
++w_p = zeros(num_users, 1);
++c = (1/num_users) * ones(num_users, 1); 
++
++denom_c_vec = zeros(num_users, 1);
++denom_p_vec = zeros(num_users, 1);
++
++% 迭代更新
++for iter = 1:max_iter
++    % --- Step A: 更新 MMSE 接收器 u ---
++    for k = 1:num_users
++        hk = h_eff(:, k);
++        % 公共流
++        denom_c = abs(hk' * v_c)^2 + sum(abs(hk' * V_p).^2) + noise_power;
++        denom_c_vec(k) = denom_c;
++        u_c(k) = (hk' * v_c) / (denom_c + cfg.eps);
++        % 私有流
++        denom_p = sum(abs(hk' * V_p).^2) + noise_power;
++        denom_p_vec(k) = denom_p;
++        u_p(k) = (hk' * V_p(:, k)) / (denom_p + cfg.eps);
++    end
++    
++    % --- Step B: 更新 MSE 权重 w ---
++    e_c = zeros(num_users, 1);
++    e_p = zeros(num_users, 1);
++    for k = 1:num_users
++        hk = h_eff(:, k);
++        sc = abs(hk' * v_c)^2;
++        sp = abs(hk' * V_p(:, k))^2;
++
++        % With MMSE receivers, MSE admits a closed-form: e = 1 - S / (S + I + N)
++        e_c(k) = 1 - sc / (denom_c_vec(k) + cfg.eps);
++        e_p(k) = 1 - sp / (denom_p_vec(k) + cfg.eps);
++
++        % Numerical safety
++        e_c(k) = max(real(e_c(k)), 1e-12);
++        e_p(k) = max(real(e_p(k)), 1e-12);
++
++        w_c(k) = 1 / e_c(k);
++        w_p(k) = 1 / e_p(k);
++    end
++    
++    % --- Step C: 更新预编码 V (闭式解/二次规划) ---
++    % 构造公共流预编码相关矩阵 A_common
++    A_common = zeros(nt, nt);
++    for i = 1:num_users
++        hi = h_eff(:, i);
++        A_common = A_common + weights(i) * w_c(i) * abs(u_c(i))^2 * (hi * hi');
++    end
++    % 构造私有流更新矩阵 A_all (对所有 v_k 相同)
++    A_all = A_common;
++    for i = 1:num_users
++        hi = h_eff(:, i);
++        A_all = A_all + weights(i) * w_p(i) * abs(u_p(i))^2 * (hi * hi');
++    end
++
++    % RHS vectors
++    b_c = zeros(nt, 1);
++    for i = 1:num_users
++        b_c = b_c + weights(i) * w_c(i) * conj(u_c(i)) * h_eff(:, i);
++    end
++    b_scale = (weights(:) .* w_p(:) .* conj(u_p(:))).'; % 1 x K
++    B_p = h_eff .* (ones(nt, 1) * b_scale); % nt x K
++
++    % Lagrange multiplier mu via bisection (power-tight & stable)
++    mu_low = 0;
++    mu_high = 1e-8;
++
++    [v_c_tmp, V_p_tmp, p_tmp] = update_precoders(A_common, A_all, b_c, B_p, mu_low, cfg.eps);
++    if p_tmp <= p_watts
++        v_c = v_c_tmp;
++        V_p = V_p_tmp;
++    else
++        % Increase upper bound until feasible
++        for t = 1:60
++            [~, ~, p_hi] = update_precoders(A_common, A_all, b_c, B_p, mu_high, cfg.eps);
++            if p_hi <= p_watts
++                break;
++            end
++            mu_high = mu_high * 2;
++        end
++
++        % Bisection
++        for t = 1:30
++            mu_mid = 0.5 * (mu_low + mu_high);
++            [v_c_mid, V_p_mid, p_mid] = update_precoders(A_common, A_all, b_c, B_p, mu_mid, cfg.eps);
++            if p_mid > p_watts
++                mu_low = mu_mid;
++            else
++                mu_high = mu_mid;
++                v_c = v_c_mid;
++                V_p = V_p_mid;
++            end
++        end
++    end
++end
++
++% 计算最终速率
++gamma_c = zeros(num_users, 1);
++gamma_p = zeros(num_users, 1);
++for k = 1:num_users
++    hk = h_eff(:, k);
++    gamma_c(k) = abs(hk' * v_c)^2 / (sum(abs(hk' * V_p).^2) + noise_power + cfg.eps);
++    gamma_p(k) = abs(hk' * V_p(:, k))^2 / (sum(abs(hk' * V_p(:, setdiff(1:num_users, k))).^2) + noise_power + cfg.eps);
++end
++
++R_c_limit = cfg.bandwidth * log2(1 + min(gamma_c) + cfg.eps);
++R_p = cfg.bandwidth * log2(1 + gamma_p + cfg.eps);
++
++% 公共速率分配 c (按权重分配)
++total_weight = sum(weights);
++c = (weights(:) / (total_weight + cfg.eps)) * R_c_limit;
++
++rates = R_p + c;
++sum_rate = sum(rates);
++
++V.v_c = v_c;
++V.V_p = V_p;
++V.c = c;
++end
++
++function [v_c, V_p, p_used] = update_precoders(A_common, A_all, b_c, B_p, mu, eps0)
++nt = size(A_common, 1);
++I = eye(nt);
++v_c = (A_common + mu * I + eps0 * I) \ b_c;
++V_p = (A_all + mu * I + eps0 * I) \ B_p;
++p_used = real(norm(v_c)^2 + sum(sum(abs(V_p).^2)));
+ end
+\ No newline at end of file
+--- matlab_sim/ris_phase_mm.m
++++ matlab_sim/ris_phase_mm.m
+@@ -1,58 +1,80 @@
+-function theta_new = ris_phase_mm(cfg, ch, assign, V, weights, max_iter)
+-%RIS_PHASE_MM 严格 RIS 相位 MM 优化 (基于 RSMA-WMMSE 诱导的 UQP)
+-%
+-% 实现论文 3.3 节算法的核心逻辑：
+-%   - 目标: 最小化加权 WMSE
+-%   - 约束: 单位模相位约束 |exp(j*theta)| = 1
+-
+-num_ris = cfg.num_ris;
+-n_ris = cfg.n_ris;
+-num_users = cfg.num_users;
+-v_c = V.v_c;
+-V_p = V.V_p;
+-
+-if nargin < 6
+-    max_iter = 5;
+-end
+-
+-theta_new = ch.theta; % 初始化为当前相位
+-
+-% 逐个 RIS 更新 (块坐标下降)
+-for l = 1:num_ris
+-    % 构造针对第 l 块 RIS 的聚合相位向量
+-    v_agg = zeros(n_ris, 1);
+-    
+-    % 遍历所有用户，累加他们对该 RIS 的相位对齐偏好
+-    for k = 1:num_users
+-        % 获取该用户受影响的权重 (QoE 驱动)
+-        qoe_w = weights(k);
+-        
+-        % 计算不含当前 RIS 贡献的等效信道项 (直连 + 其他 RIS)
+-        h_others = ch.h_d(:, k);
+-        for j = setdiff(1:num_ris, l)
+-            h_others = h_others + cfg.ris_gain * ch.G(:, :, j) * (theta_new(:, j) .* ch.H_ris(:, k, j));
+-        end
+-        
+-        % 级联信道矩阵项 M_kl = G_l * diag(h_rk,l)
+-        M_kl = cfg.ris_gain * ch.G(:, :, l) * diag(ch.H_ris(:, k, l));
+-        
+-        % 处理公共流 v_c
+-        % 目标是让 M_kl * v_l 产生的信号与 h_others 产生的信号在 v_c 方向上同相
+-        alpha_c = h_others' * v_c;
+-        beta_c_vec = (v_c' * M_kl).'; % 这是一个 n_ris x 1 向量
+-        % 相位补偿项: 使 exp(j*theta) * beta_c_vec 与 alpha_c 同相
+-        v_agg = v_agg + qoe_w * exp(1j * (angle(alpha_c + cfg.eps) - angle(beta_c_vec + cfg.eps)));
+-        
+-        % 处理私有流 v_k
+-        vk = V_p(:, k);
+-        alpha_p = h_others' * vk;
+-        beta_p_vec = (vk' * M_kl).';
+-        v_agg = v_agg + qoe_w * exp(1j * (angle(alpha_p + cfg.eps) - angle(beta_p_vec + cfg.eps)));
+-    end
+-    
+-    % 单位模投影更新
+-    if norm(v_agg) > cfg.eps
+-        theta_new(:, l) = exp(1j * angle(v_agg));
+-    end
+-end
+-end
++function theta_new = ris_phase_mm(cfg, ch, assign, V, weights, max_iter, theta_init)
++%RIS_PHASE_MM 严格 RIS 相位 MM 优化 (基于 RSMA-WMMSE 诱导的 UQP)
++%
++% 实现论文 3.3 节算法的核心逻辑：
++%   - 目标: 最小化加权 WMSE
++%   - 约束: 单位模相位约束 |exp(j*theta)| = 1
++
++num_ris = cfg.num_ris;
++n_ris = cfg.n_ris;
++num_users = cfg.num_users;
++v_c = V.v_c;
++V_p = V.V_p;
++
++if nargin < 6
++    max_iter = 5;
++end
++
++if nargin < 7
++    theta_init = [];
++end
++
++% Use provided initialization if available (AO should warm-start from current theta).
++if ~isempty(theta_init)
++    theta_new = theta_init;
++else
++    theta_new = ch.theta;
++end
++
++% Basic safety
++if size(theta_new, 1) ~= n_ris || size(theta_new, 2) ~= num_ris
++    theta_new = ch.theta;
++end
++
++% 逐个 RIS 更新 (块坐标下降)
++for l = 1:num_ris
++    users_l = find(assign == l);
++    if isempty(users_l)
++        % No associated users -> keep the previous phase.
++        continue;
++    end
++
++    % 构造针对第 l 块 RIS 的聚合相位向量
++    v_agg = zeros(n_ris, 1);
++    
++    % 遍历所有用户，累加他们对该 RIS 的相位对齐偏好
++    for k = 1:num_users
++        if assign(k) ~= l
++            continue;
++        end
++        % 获取该用户受影响的权重 (QoE 驱动)
++        qoe_w = weights(k);
++        
++        % 计算不含当前 RIS 贡献的等效信道项 (直连 + 其他 RIS)
++        % NOTE: In this repo's association model, each user is aided by at most ONE RIS.
++        % For user k associated with RIS-l, the "other" channel is therefore direct only.
++        h_others = ch.h_d(:, k);
++        
++        % 级联信道矩阵项 M_kl = G_l * diag(h_rk,l)
++        M_kl = cfg.ris_gain * ch.G(:, :, l) * diag(ch.H_ris(:, k, l));
++        
++        % 处理公共流 v_c
++        % 目标是让 M_kl * v_l 产生的信号与 h_others 产生的信号在 v_c 方向上同相
++        alpha_c = h_others' * v_c;
++        beta_c_vec = (v_c' * M_kl).'; % 这是一个 n_ris x 1 向量
++        % 相位补偿项: 使 exp(j*theta) * beta_c_vec 与 alpha_c 同相
++        v_agg = v_agg + qoe_w * exp(1j * (angle(alpha_c + cfg.eps) - angle(beta_c_vec + cfg.eps)));
++        
++        % 处理私有流 v_k (只对齐用户 k 自己的私有流)
++        vk = V_p(:, k);
++        alpha_p = h_others' * vk;
++        beta_p_vec = (vk' * M_kl).';
++        v_agg = v_agg + qoe_w * exp(1j * (angle(alpha_p + cfg.eps) - angle(beta_p_vec + cfg.eps)));
++    end
++    
++    % 单位模投影更新
++    if norm(v_agg) > cfg.eps
++        theta_new(:, l) = exp(1j * angle(v_agg));
++    end
++end
++end
+--- matlab_sim/ua_qoe_ao.m
++++ matlab_sim/ua_qoe_ao.m
+@@ -11,18 +11,11 @@
+ 
+ [profile, weights_row] = resolve_profile(cfg, geom, weights_or_profile);
+ 
+-% Step 1: initialize assignment (legacy behavior: qoe_aware-driven)
+-assign = qoe_aware(cfg, ch, p_dbw, semantic_mode, table_path, weights_row, geom);
++% Step 1: initialize assignment (QoE-gain matching; single-user approximation)
++assign = qoe_aware(cfg, ch, p_dbw, semantic_mode, table_path, weights_row, geom, profile);
+ 
+-% Step 2: initialize theta (align)
+-theta_all = zeros(n_ris, num_ris);
+-for l = 1:num_ris
+-    hdk = ch.h_d(:, 1);
+-    denom = norm(hdk) + cfg.eps;
+-    w0 = hdk / denom;
+-    proj = (w0' * ch.G(:, :, l)).' .* ch.H_ris(:, 1, l);
+-    theta_all(:, l) = exp(-1j * angle(proj + cfg.eps));
+-end
++% Step 2: initialize theta (align each RIS to its currently-associated user if any)
++theta_all = init_theta_by_assignment(cfg, ch, assign);
+ 
+ % Step 3: initialize RSMA precoder
+ h_eff = effective_channel(cfg, ch, assign, theta_all);
+@@ -50,6 +43,10 @@
+ out_old = evaluate_system_rsma(cfg, ch, geom, sol, profile, eval_opts);
+ ao_log.qoe_history = out_old.avg_qoe;
+ ao_log.sum_rate_history = out_old.sum_rate_bps;
++ao_log.accept.assign = 0;
++ao_log.accept.V = 0;
++ao_log.accept.theta = 0;
++ao_log.accept.rand = 0;
+ if verbose
+     fprintf('[ua] max_outer_iter=%d, bt_max_tries=%d\n', max_outer_iter, bt_max_tries);
+ end
+@@ -63,41 +60,53 @@
+         fprintf('[ua][outer %d] start cost=%.6f\n', outer, out_prev.avg_qoe);
+     end
+ 
+-    % Step 1: update assignment using qoe_aware
+-    assign_cand = qoe_aware(cfg, ch, p_dbw, semantic_mode, table_path, weights_row, geom);
+-    sol_guidance = struct('assign', assign_cand, 'theta_all', theta_all, 'V', V);
+-    out_guidance = evaluate_system_rsma(cfg, ch, geom, sol_guidance, profile, eval_opts);
++    % ================================================================
++    % Step 1: association update with *descent guarantee* (paper-style)
++    % ================================================================
++    eps_assign = get_cfg_or_default(cfg, 'ao_assign_eps', 1e-10);
++    sol_ref = struct('assign', assign, 'theta_all', theta_all, 'V', V);
++    assign_cand = qoe_aware(cfg, ch, p_dbw, semantic_mode, table_path, weights_row, geom, profile, sol_ref);
++
++    accepted_assign = false;
++    if ~isequal(assign_cand(:), assign(:))
++        sol_try_a = struct('assign', assign_cand, 'theta_all', theta_all, 'V', V);
++        out_try_a = evaluate_system_rsma(cfg, ch, geom, sol_try_a, profile, eval_opts);
++        if out_try_a.avg_qoe <= out_prev.avg_qoe - eps_assign
++            assign = assign_cand;
++            out_prev = out_try_a;
++            ao_log.qoe_history(end + 1, 1) = out_prev.avg_qoe;
++            ao_log.sum_rate_history(end + 1, 1) = out_prev.sum_rate_bps;
++            ao_log.accept.assign = ao_log.accept.assign + 1;
++            accepted_assign = true;
++            if verbose
++                fprintf('[ua][outer %d][A] accept cost=%.6f\n', outer, out_prev.avg_qoe);
++            end
++        elseif verbose
++            fprintf('[ua][outer %d][A] reject cost=%.6f (curr=%.6f)\n', outer, out_try_a.avg_qoe, out_prev.avg_qoe);
++        end
++    end
++
++    if ~accepted_assign
++        assign = assign_prev;
++    end
+ 
+-    % Build QoE-guided weights from deadline/semantic excess
+-    q_weights = build_excess_weights(cfg, out_guidance, profile);
++    % Build QoE-guided weights from the *current accepted* working point
++    q_weights = build_excess_weights(cfg, out_prev, profile);
+ 
+-    % Step 2: V-step backtracking (theta fixed)
++    % ================================================================
++    % Step 2: RSMA precoder update (V-step; theta fixed)
++    % ================================================================
+     if verbose
+         fprintf('[ua][outer %d][V] start cost=%.6f\n', outer, out_prev.avg_qoe);
+     end
+     accepted_v = false;
+     if simple_beam
+-        sol_cand_v = struct('assign', assign_cand, 'theta_all', theta_prev, 'V', V_prev);
+-        out_cand_v = evaluate_system_rsma(cfg, ch, geom, sol_cand_v, profile, eval_opts);
+-        if verbose
+-            fprintf('[ua][outer %d][V] cand cost=%.6f\n', outer, out_cand_v.avg_qoe);
+-        end
+-        if out_cand_v.avg_qoe <= out_prev.avg_qoe + tol
+-            assign = assign_cand;
+-            theta_all = theta_prev;
+-            V = V_prev;
+-            out_prev = out_cand_v;
+-            ao_log.qoe_history(end + 1, 1) = out_prev.avg_qoe;
+-            ao_log.sum_rate_history(end + 1, 1) = out_prev.sum_rate_bps;
+-            if verbose
+-                fprintf('[ua][outer %d][V] accept alpha=0.000 cost=%.6f\n', outer, out_prev.avg_qoe);
+-            end
+-            accepted_v = true;
+-        end
++        % no RSMA update in ablation (simple_beam): keep V
++        accepted_v = false;
+     else
+-        h_eff = effective_channel(cfg, ch, assign_cand, theta_prev);
++        h_eff = effective_channel(cfg, ch, assign, theta_all);
+         [V_cand, ~, ~, ~, ~, ~] = rsma_wmmse(cfg, h_eff, p_dbw, q_weights, wmmse_iter);
+-        sol_cand_v = struct('assign', assign_cand, 'theta_all', theta_prev, 'V', V_cand);
++        sol_cand_v = struct('assign', assign, 'theta_all', theta_all, 'V', V_cand);
+         out_cand_v = evaluate_system_rsma(cfg, ch, geom, sol_cand_v, profile, eval_opts);
+         if verbose
+             fprintf('[ua][outer %d][V] cand cost=%.6f\n', outer, out_cand_v.avg_qoe);
+@@ -106,19 +115,18 @@
+         alpha_v = 1.0;
+         for t = 1:bt_max_tries
+             V_try = blend_struct(V_prev, V_cand, alpha_v);
+-            sol_try_v = struct('assign', assign_cand, 'theta_all', theta_prev, 'V', V_try);
++            sol_try_v = struct('assign', assign, 'theta_all', theta_all, 'V', V_try);
+             out_try_v = evaluate_system_rsma(cfg, ch, geom, sol_try_v, profile, eval_opts);
+             if verbose && t <= 3
+                 fprintf('[ua][outer %d][V] try alpha=%.3f cost=%.6f\n', outer, alpha_v, out_try_v.avg_qoe);
+             end
+ 
+             if out_try_v.avg_qoe <= out_prev.avg_qoe + tol
+-                assign = assign_cand;
+-                theta_all = theta_prev;
+                 V = V_try;
+                 out_prev = out_try_v;
+                 ao_log.qoe_history(end + 1, 1) = out_prev.avg_qoe;
+                 ao_log.sum_rate_history(end + 1, 1) = out_prev.sum_rate_bps;
++                ao_log.accept.V = ao_log.accept.V + 1;
+                 if verbose
+                     fprintf('[ua][outer %d][V] accept alpha=%.3f cost=%.6f\n', outer, alpha_v, out_prev.avg_qoe);
+                 end
+@@ -131,24 +139,17 @@
+     end
+ 
+     if ~accepted_v
+-        if freeze_theta
+-            assign = assign_prev;
+-        else
+-            assign = assign_cand;
+-        end
+-        theta_all = theta_prev;
+         V = V_prev;
+         if verbose
+-            if freeze_theta
+-                fprintf('[ua][outer %d][V] no-accept (theta frozen)\n', outer);
+-            else
+-                fprintf('[ua][outer %d][V] no-accept -> proceed theta-step\n', outer);
+-            end
++            fprintf('[ua][outer %d][V] no-accept\n', outer);
+         end
+     end
+ 
+-    % Step 3: theta-step backtracking (V fixed)
++    % ================================================================
++    % Step 3: RIS phase update (theta-step; V fixed)
++    % ================================================================
+     accepted_t = false;
++    accepted_r = false;
+     if freeze_theta
+         if verbose
+             fprintf('[ua][outer %d][T] skipped (freeze theta)\n', outer);
+@@ -157,7 +158,7 @@
+         if verbose
+             fprintf('[ua][outer %d][T] start cost=%.6f\n', outer, out_prev.avg_qoe);
+         end
+-        theta_cand = ris_phase_mm(cfg, ch, assign, V, q_weights, mm_iter);
++        theta_cand = ris_phase_mm(cfg, ch, assign, V, q_weights, mm_iter, theta_all);
+         sol_cand_t = struct('assign', assign, 'theta_all', theta_cand, 'V', V);
+         out_cand_t = evaluate_system_rsma(cfg, ch, geom, sol_cand_t, profile, eval_opts);
+         if verbose
+@@ -178,6 +179,7 @@
+                 out_prev = out_try_t;
+                 ao_log.qoe_history(end + 1, 1) = out_prev.avg_qoe;
+                 ao_log.sum_rate_history(end + 1, 1) = out_prev.sum_rate_bps;
++                ao_log.accept.theta = ao_log.accept.theta + 1;
+                 if verbose
+                     fprintf('[ua][outer %d][T] accept alpha=%.3f cost=%.6f\n', outer, alpha_t, out_prev.avg_qoe);
+                 end
+@@ -223,6 +225,8 @@
+             out_prev = best_out;
+             ao_log.qoe_history(end + 1, 1) = out_prev.avg_qoe;
+             ao_log.sum_rate_history(end + 1, 1) = out_prev.sum_rate_bps;
++            ao_log.accept.rand = ao_log.accept.rand + 1;
++            accepted_r = true;
+             if verbose
+                 fprintf('[ua][outer %d][R] accept cost=%.6f\n', outer, out_prev.avg_qoe);
+             end
+@@ -233,6 +237,14 @@
+         end
+     end
+     out_old = out_prev;
++
++    % Early stop if nothing was accepted in this outer iteration.
++    if ~accepted_assign && ~accepted_v && ~accepted_t && ~accepted_r
++        if verbose
++            fprintf('[ua][outer %d] no improvement -> stop\n', outer);
++        end
++        break;
++    end
+ end
+ 
+ beam_info = V;
+@@ -262,14 +274,57 @@
+ 
+ function q_weights = build_excess_weights(cfg, out_old, profile)
+ K = cfg.num_users;
+-ratio_d = out_old.T_tx ./ profile.d_k;
+-ratio_s = out_old.D ./ profile.dmax_k;
+-q_weights = 1 + max(0, ratio_d - 1) + max(0, ratio_s - 1);
+-sum_w = sum(q_weights);
+-if ~isfinite(sum_w) || sum_w <= cfg.eps || any(~isfinite(q_weights))
+-    q_weights = ones(K, 1) / K;
++ratio_d = out_old.T_tx ./ (profile.d_k(:) + cfg.eps);
++ratio_s = out_old.D ./ (profile.dmax_k(:) + cfg.eps);
++
++% Keep weight construction consistent with QoE evaluation (ratio is clipped in qoe.m)
++if isfield(cfg, 'max_ratio_d')
++    ratio_d = min(ratio_d, cfg.max_ratio_d);
++end
++if isfield(cfg, 'max_ratio_s')
++    ratio_s = min(ratio_s, cfg.max_ratio_s);
++end
++
++% Violation excess (>=0)
++ex_d = max(0, ratio_d - 1);
++ex_s = max(0, ratio_s - 1);
++
++% Per-user delay/semantic importance
++w_d = profile.weights(:, 1);
++w_s = profile.weights(:, 2);
++
++% Fairness floor + weighted excess emphasis
++q_weights = 1 + w_d .* ex_d + w_s .* ex_s;
++
++% Normalize by mean to keep weights O(1)
++m = mean(q_weights);
++if ~isfinite(m) || m <= cfg.eps || any(~isfinite(q_weights))
++    q_weights = ones(K, 1);
+ else
+-    q_weights = q_weights / (sum_w + cfg.eps);
++    q_weights = q_weights / (m + cfg.eps);
++end
++end
++
++function theta_all = init_theta_by_assignment(cfg, ch, assign)
++%INIT_THETA_BY_ASSIGNMENT Align each RIS to its associated user (if any).
++L = cfg.num_ris;
++N = cfg.n_ris;
++theta_all = ch.theta;
++
++for l = 1:L
++    users_l = find(assign == l);
++    if isempty(users_l)
++        continue;
++    end
++    k = users_l(1);
++    hdk = ch.h_d(:, k);
++    w0 = hdk / (norm(hdk) + cfg.eps);
++    proj = (w0' * ch.G(:, :, l)).' .* ch.H_ris(:, k, l);
++    theta_all(:, l) = exp(-1j * angle(proj + cfg.eps));
++end
++
++if size(theta_all, 1) ~= N
++    theta_all = theta_all(1:N, :);
+ end
+ end
+ 
+--- matlab_sim/ua_qoe_ao_fixedX.m
++++ matlab_sim/ua_qoe_ao_fixedX.m
+@@ -35,14 +35,7 @@
+ if strcmpi(init_theta, 'random')
+     theta_all = ch.theta;
+ else
+-    theta_all = zeros(N, L);
+-    for l = 1:L
+-        hdk = ch.h_d(:, 1);
+-        denom = norm(hdk) + cfg.eps;
+-        w0 = hdk / denom;
+-        proj = (w0' * ch.G(:, :, l)).' .* ch.H_ris(:, 1, l);
+-        theta_all(:, l) = exp(-1j * angle(proj + cfg.eps));
+-    end
++    theta_all = init_theta_by_assignment(cfg, ch, assign_fixed);
+ end
+ 
+ % 2) V init
+@@ -64,17 +57,26 @@
+     V_old = sol.V;
+     theta_old = sol.theta_all;
+ 
+-    ratio_d = out_old.T_tx ./ profile.d_k;
+-    ratio_s = out_old.D ./ profile.dmax_k;
+-    excess_d = max(0, ratio_d - 1);
+-    excess_s = max(0, ratio_s - 1);
+-    q_weights = 1 + excess_d + excess_s;
+-
+-    sum_w = sum(q_weights);
+-    if ~isfinite(sum_w) || sum_w <= cfg.eps || any(~isfinite(q_weights))
+-        q_weights = ones(K, 1) / K;
++    ratio_d = out_old.T_tx ./ (profile.d_k(:) + cfg.eps);
++    ratio_s = out_old.D ./ (profile.dmax_k(:) + cfg.eps);
++    if isfield(cfg, 'max_ratio_d')
++        ratio_d = min(ratio_d, cfg.max_ratio_d);
++    end
++    if isfield(cfg, 'max_ratio_s')
++        ratio_s = min(ratio_s, cfg.max_ratio_s);
++    end
++    ex_d = max(0, ratio_d - 1);
++    ex_s = max(0, ratio_s - 1);
++
++    w_d = profile.weights(:, 1);
++    w_s = profile.weights(:, 2);
++    q_weights = 1 + w_d .* ex_d + w_s .* ex_s;
++
++    m = mean(q_weights);
++    if ~isfinite(m) || m <= cfg.eps || any(~isfinite(q_weights))
++        q_weights = ones(K, 1);
+     else
+-        q_weights = q_weights / (sum_w + cfg.eps);
++        q_weights = q_weights / (m + cfg.eps);
+     end
+ 
+     % b) RSMA update
+@@ -82,7 +84,7 @@
+     [V_cand, ~, ~, ~, ~, ~] = rsma_wmmse(cfg, h_eff, p_dbw, q_weights, wmmse_iter);
+ 
+     % c) RIS phase update
+-    theta_cand = ris_phase_mm(cfg, ch, assign_fixed, V_cand, q_weights, mm_iter);
++    theta_cand = ris_phase_mm(cfg, ch, assign_fixed, V_cand, q_weights, mm_iter, sol.theta_all);
+ 
+     % Candidate quality at alpha = 1 (for observability)
+     sol_new = sol;
+@@ -143,6 +145,29 @@
+ V_out.c = (1 - alpha) * V_old.c + alpha * V_cand.c;
+ end
+ 
++function theta_all = init_theta_by_assignment(cfg, ch, assign)
++%INIT_THETA_BY_ASSIGNMENT Align each RIS to its associated user (if any).
++L = cfg.num_ris;
++N = cfg.n_ris;
++theta_all = ch.theta;
++
++for l = 1:L
++    users_l = find(assign == l);
++    if isempty(users_l)
++        continue;
++    end
++    k = users_l(1);
++    hdk = ch.h_d(:, k);
++    w0 = hdk / (norm(hdk) + cfg.eps);
++    proj = (w0' * ch.G(:, :, l)).' .* ch.H_ris(:, k, l);
++    theta_all(:, l) = exp(-1j * angle(proj + cfg.eps));
++end
++
++if size(theta_all, 1) ~= N
++    theta_all = theta_all(1:N, :);
++end
++end
++
+ function v = get_opt(opts, f, d)
+ if isfield(opts, f) && ~isempty(opts.(f))
+     v = opts.(f);

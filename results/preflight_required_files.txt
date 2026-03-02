@@ -1,0 +1,88 @@
+=== ENTRY matlab_experiments/paper_run_all.m ===
+required_files_count=21
+FILE D:\down\code\risqoe\main\matlab_experiments\paper_ablation.m
+FILE D:\down\code\risqoe\main\matlab_experiments\paper_cdf.m
+FILE D:\down\code\risqoe\main\matlab_experiments\paper_run_all.m
+FILE D:\down\code\risqoe\main\matlab_experiments\paper_sweep_power.m
+FILE D:\down\code\risqoe\main\matlab_experiments\paper_sweep_ris_count.m
+FILE D:\down\code\risqoe\main\matlab_sim\build_profile_urgent_normal.m
+FILE D:\down\code\risqoe\main\matlab_sim\calc_prop_delay.m
+FILE D:\down\code\risqoe\main\matlab_sim\channel.m
+FILE D:\down\code\risqoe\main\matlab_sim\config.m
+FILE D:\down\code\risqoe\main\matlab_sim\effective_channel.m
+FILE D:\down\code\risqoe\main\matlab_sim\evaluate_system_rsma.m
+FILE D:\down\code\risqoe\main\matlab_sim\geometry.m
+FILE D:\down\code\risqoe\main\matlab_sim\matching\ga_match_qoe.m
+FILE D:\down\code\risqoe\main\matlab_sim\matching\qoe_aware.m
+FILE D:\down\code\risqoe\main\matlab_sim\normalize_index_vector.m
+FILE D:\down\code\risqoe\main\matlab_sim\qoe.m
+FILE D:\down\code\risqoe\main\matlab_sim\ris_phase_mm.m
+FILE D:\down\code\risqoe\main\matlab_sim\rsma_wmmse.m
+FILE D:\down\code\risqoe\main\matlab_sim\semantic_map.m
+FILE D:\down\code\risqoe\main\matlab_sim\ua_qoe_ao.m
+FILE D:\down\code\risqoe\main\matlab_sim\ua_qoe_ao_fixedX.m
+products_count=1
+PROD MATLAB
+=== ENTRY matlab_experiments/paper_sweep_power.m ===
+required_files_count=17
+FILE D:\down\code\risqoe\main\matlab_experiments\paper_sweep_power.m
+FILE D:\down\code\risqoe\main\matlab_sim\build_profile_urgent_normal.m
+FILE D:\down\code\risqoe\main\matlab_sim\calc_prop_delay.m
+FILE D:\down\code\risqoe\main\matlab_sim\channel.m
+FILE D:\down\code\risqoe\main\matlab_sim\config.m
+FILE D:\down\code\risqoe\main\matlab_sim\effective_channel.m
+FILE D:\down\code\risqoe\main\matlab_sim\evaluate_system_rsma.m
+FILE D:\down\code\risqoe\main\matlab_sim\geometry.m
+FILE D:\down\code\risqoe\main\matlab_sim\matching\ga_match_qoe.m
+FILE D:\down\code\risqoe\main\matlab_sim\matching\qoe_aware.m
+FILE D:\down\code\risqoe\main\matlab_sim\normalize_index_vector.m
+FILE D:\down\code\risqoe\main\matlab_sim\qoe.m
+FILE D:\down\code\risqoe\main\matlab_sim\ris_phase_mm.m
+FILE D:\down\code\risqoe\main\matlab_sim\rsma_wmmse.m
+FILE D:\down\code\risqoe\main\matlab_sim\semantic_map.m
+FILE D:\down\code\risqoe\main\matlab_sim\ua_qoe_ao.m
+FILE D:\down\code\risqoe\main\matlab_sim\ua_qoe_ao_fixedX.m
+products_count=1
+PROD MATLAB
+=== ENTRY matlab_experiments/paper_sweep_ris_count.m ===
+required_files_count=16
+FILE D:\down\code\risqoe\main\matlab_experiments\paper_sweep_ris_count.m
+FILE D:\down\code\risqoe\main\matlab_sim\build_profile_urgent_normal.m
+FILE D:\down\code\risqoe\main\matlab_sim\calc_prop_delay.m
+FILE D:\down\code\risqoe\main\matlab_sim\channel.m
+FILE D:\down\code\risqoe\main\matlab_sim\config.m
+FILE D:\down\code\risqoe\main\matlab_sim\effective_channel.m
+FILE D:\down\code\risqoe\main\matlab_sim\evaluate_system_rsma.m
+FILE D:\down\code\risqoe\main\matlab_sim\geometry.m
+FILE D:\down\code\risqoe\main\matlab_sim\matching\ga_match_qoe.m
+FILE D:\down\code\risqoe\main\matlab_sim\matching\qoe_aware.m
+FILE D:\down\code\risqoe\main\matlab_sim\qoe.m
+FILE D:\down\code\risqoe\main\matlab_sim\ris_phase_mm.m
+FILE D:\down\code\risqoe\main\matlab_sim\rsma_wmmse.m
+FILE D:\down\code\risqoe\main\matlab_sim\semantic_map.m
+FILE D:\down\code\risqoe\main\matlab_sim\ua_qoe_ao.m
+FILE D:\down\code\risqoe\main\matlab_sim\ua_qoe_ao_fixedX.m
+products_count=1
+PROD MATLAB
+=== ENTRY matlab_sim/evaluate_system_rsma.m ===
+required_files_count=4
+FILE D:\down\code\risqoe\main\matlab_sim\calc_prop_delay.m
+FILE D:\down\code\risqoe\main\matlab_sim\evaluate_system_rsma.m
+FILE D:\down\code\risqoe\main\matlab_sim\qoe.m
+FILE D:\down\code\risqoe\main\matlab_sim\semantic_map.m
+products_count=1
+PROD MATLAB
+=== ENTRY matlab_sim/ua_qoe_ao.m ===
+required_files_count=10
+FILE D:\down\code\risqoe\main\matlab_sim\build_profile_urgent_normal.m
+FILE D:\down\code\risqoe\main\matlab_sim\calc_prop_delay.m
+FILE D:\down\code\risqoe\main\matlab_sim\effective_channel.m
+FILE D:\down\code\risqoe\main\matlab_sim\evaluate_system_rsma.m
+FILE D:\down\code\risqoe\main\matlab_sim\matching\qoe_aware.m
+FILE D:\down\code\risqoe\main\matlab_sim\qoe.m
+FILE D:\down\code\risqoe\main\matlab_sim\ris_phase_mm.m
+FILE D:\down\code\risqoe\main\matlab_sim\rsma_wmmse.m
+FILE D:\down\code\risqoe\main\matlab_sim\semantic_map.m
+FILE D:\down\code\risqoe\main\matlab_sim\ua_qoe_ao.m
+products_count=1
+PROD MATLAB
