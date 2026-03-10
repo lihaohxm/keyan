@@ -14,17 +14,17 @@ addpath(fullfile(proj_root, 'matlab_sim', 'matching'), '-begin');
 cfg = config();
 
 p = inputParser;
-addParameter(p, 'mc', 50);
+addParameter(p, 'mc', 30);
 addParameter(p, 'seed', 42);
 addParameter(p, 'p_dbw', -8);
-addParameter(p, 'ris_list', [1 2 3 4]);
+addParameter(p, 'ris_list', [16 25 36 49 64]);
 addParameter(p, 'out_name', 'ris_count_fixed');
 addParameter(p, 'ga_log', false);
 addParameter(p, 'cfg_overrides', struct());
 addParameter(p, 'save_figures', true);
 addParameter(p, 'save_mat', true);
 addParameter(p, 'save_csv', true);
-addParameter(p, 'include_ga_ub', true);
+addParameter(p, 'include_ga_ub', false);
 addParameter(p, 'show_ga_ub', false);
 addParameter(p, 'ga_rt_pop_size', 8);
 addParameter(p, 'ga_rt_num_generations', 6);
@@ -48,12 +48,40 @@ tol_q = 1e-9;
 
 urgent_qoe_all = zeros(mc, num_ris_cfg, num_alg);
 avg_qoe_all = zeros(mc, num_ris_cfg, num_alg);
+avg_qoe_composite_all = zeros(mc, num_ris_cfg, num_alg);
+common_struct_pen_all = zeros(mc, num_ris_cfg, num_alg);
 urgent_delay_vio_all = zeros(mc, num_ris_cfg, num_alg);
 urgent_semantic_vio_all = zeros(mc, num_ris_cfg, num_alg);
 sum_rate_all = zeros(mc, num_ris_cfg, num_alg);
 urgent_sum_rate_all = zeros(mc, num_ris_cfg, num_alg);
 urgent_avg_rate_all = zeros(mc, num_ris_cfg, num_alg);
 ris_count_all = zeros(mc, num_ris_cfg, num_alg);
+common_power_ratio_all = nan(mc, num_ris_cfg, num_alg);
+private_rate_sum_all = nan(mc, num_ris_cfg, num_alg);
+common_rate_sum_all = nan(mc, num_ris_cfg, num_alg);
+Rc_limit_all = nan(mc, num_ris_cfg, num_alg);
+user_rate_std_all = nan(mc, num_ris_cfg, num_alg);
+common_power_ratio_raw_all = nan(mc, num_ris_cfg, num_alg);
+common_power_ratio_clipped_all = nan(mc, num_ris_cfg, num_alg);
+common_cap_active_all = nan(mc, num_ris_cfg, num_alg);
+accept_assign_all = nan(mc, num_ris_cfg, num_alg);
+accept_v_all = nan(mc, num_ris_cfg, num_alg);
+accept_theta_all = nan(mc, num_ris_cfg, num_alg);
+accept_theta_main_all = nan(mc, num_ris_cfg, num_alg);
+accept_theta_polish_all = nan(mc, num_ris_cfg, num_alg);
+theta_changed_norm_all = nan(mc, num_ris_cfg, num_alg);
+theta_changed_norm_polish_all = nan(mc, num_ris_cfg, num_alg);
+common_shaved_power_all = nan(mc, num_ris_cfg, num_alg);
+urgent_private_ratio_before_floor_all = nan(mc, num_ris_cfg, num_alg);
+urgent_private_ratio_after_floor_all = nan(mc, num_ris_cfg, num_alg);
+normal_to_urgent_transfer_power_all = nan(mc, num_ris_cfg, num_alg);
+theta_pre_refit_improve_all = nan(mc, num_ris_cfg, num_alg);
+theta_post_refit_improve_all = nan(mc, num_ris_cfg, num_alg);
+theta_refit_swallow_ratio_all = nan(mc, num_ris_cfg, num_alg);
+private_first_budget_ratio_all = nan(mc, num_ris_cfg, num_alg);
+common_enabled_flag_all = nan(mc, num_ris_cfg, num_alg);
+common_marginal_gain_proxy_all = nan(mc, num_ris_cfg, num_alg);
+rebalance_triggered_flag_all = nan(mc, num_ris_cfg, num_alg);
 proposed_eval_calls_all = nan(mc, num_ris_cfg);
 ga_rt_eval_calls_all = nan(mc, num_ris_cfg);
 ga_rt_budget_target_all = nan(mc, num_ris_cfg);
@@ -72,12 +100,19 @@ for trial_idx = 1:mc
     trial_seed = seed + trial_idx;
     rng(trial_seed, 'twister');
 
+    prev_sol_proposed = [];
+
+    fixed_num_ris = cfg.num_ris;
     for ix = 1:num_ris_cfg
-        ris_count = ris_list(ix);
+        L_val = ris_list(ix);
 
         cfg2 = cfg;
-        cfg2.num_ris = ris_count;
-        cfg2.ris_per_cell = ris_count;
+        cfg2.n_ris = L_val;
+        cfg2.num_ris = fixed_num_ris;
+        
+        if ~isfield(cfg2, 'ris_gain') || isempty(cfg2.ris_gain)
+            cfg2.ris_gain = 30;
+        end
 
         geom = geometry(cfg2, trial_seed);
         ch = channel(cfg2, geom, trial_seed);
@@ -92,8 +127,17 @@ for trial_idx = 1:mc
             rng(algo_seed, 'twister');
 
             if strcmpi(alg, 'proposed')
-                [assign, theta_all, V, ao_log] = ua_qoe_ao(cfg2, ch, geom, p_dbw, cfg2.semantic_mode, cfg2.semantic_table, profile);
+                % if isempty(prev_sol_proposed)
+                %     init_sol = [];
+                % else
+                %     init_sol = expand_solution_over_L(prev_sol_proposed, cfg2.n_ris);
+                % end
+                init_sol = [];
+
+                [assign, theta_all, V, ao_log] = ua_qoe_ao(cfg2, ch, geom, p_dbw, cfg2.semantic_mode, cfg2.semantic_table, profile, init_sol);
                 sol = struct('assign', assign, 'theta_all', theta_all, 'V', V);
+                % prev_sol_proposed = sol;
+
                 if isfield(ao_log, 'eval_calls')
                     proposed_budget = ao_log.eval_calls;
                 else
@@ -102,18 +146,15 @@ for trial_idx = 1:mc
                 proposed_eval_calls_all(trial_idx, ix) = proposed_budget;
             else
                 [assign_fixed, assign_info] = pick_assignment_local(cfg2, ch, geom, alg, profile, p_dbw, proposed_budget, p.Results.ga_log, p.Results);
+                [sol_fixed, ~] = ua_qoe_ao_fixedX(cfg2, ch, geom, p_dbw, assign_fixed, profile, struct());
+                sol = sol_fixed;
                 if strcmpi(alg, 'ga_rt')
-                    % GA-RT uses real-time constrained GA and must stay in light-solve branch.
-                    sol = build_light_solution(cfg2, ch, assign_fixed, p_dbw);
                     if isfield(assign_info, 'eval_count')
                         ga_rt_eval_calls_all(trial_idx, ix) = assign_info.eval_count;
                     end
                     if isfield(assign_info, 'budget_target')
                         ga_rt_budget_target_all(trial_idx, ix) = assign_info.budget_target;
                     end
-                else
-                    [sol_fixed, ~] = ua_qoe_ao_fixedX(cfg2, ch, geom, p_dbw, assign_fixed, profile, struct());
-                    sol = sol_fixed;
                 end
             end
 
@@ -123,13 +164,102 @@ for trial_idx = 1:mc
             urgent_avg_rate_bps = mean(rate_vec_bps(urgent_idx)); % bps
             sanity = update_sanity_bounds(sanity, out, tol_q, sprintf('trial=%d,ris_idx=%d,alg=%s', trial_idx, ix, alg));
             urgent_qoe_all(trial_idx, ix, ia) = mean(out.qoe_vec(urgent_idx));
-            avg_qoe_all(trial_idx, ix, ia) = out.avg_qoe;
+            if isfield(out, 'avg_qoe_pure')
+                avg_qoe_all(trial_idx, ix, ia) = out.avg_qoe_pure;
+            else
+                avg_qoe_all(trial_idx, ix, ia) = out.avg_qoe;
+            end
+            
+            if isfield(out, 'composite_cost')
+                avg_qoe_composite_all(trial_idx, ix, ia) = out.composite_cost;
+            else
+                avg_qoe_composite_all(trial_idx, ix, ia) = out.avg_qoe;
+            end
+
+            if isfield(out, 'common_struct_pen')
+                common_struct_pen_all(trial_idx, ix, ia) = out.common_struct_pen;
+            else
+                common_struct_pen_all(trial_idx, ix, ia) = 0;
+            end
             urgent_delay_vio_all(trial_idx, ix, ia) = mean(out.delay_vio_vec(urgent_idx));
             urgent_semantic_vio_all(trial_idx, ix, ia) = mean(out.semantic_vio_vec(urgent_idx));
             sum_rate_all(trial_idx, ix, ia) = out.sum_rate_bps;
             urgent_sum_rate_all(trial_idx, ix, ia) = urgent_sum_rate_bps;
             urgent_avg_rate_all(trial_idx, ix, ia) = urgent_avg_rate_bps;
             ris_count_all(trial_idx, ix, ia) = sum(sol.assign(:) > 0);
+            
+            if ~isfield(out, 'diag') && isfield(sol, 'V') && isfield(sol.V, 'diag')
+                out.diag = sol.V.diag;
+            end
+
+            if isfield(out, 'diag')
+                common_power_ratio_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'common_power_ratio', NaN);
+                private_rate_sum_all(trial_idx, ix, ia)   = getfield_safe(out.diag, 'private_rate_sum', NaN);
+                common_rate_sum_all(trial_idx, ix, ia)    = getfield_safe(out.diag, 'common_rate_sum', NaN);
+                Rc_limit_all(trial_idx, ix, ia)           = getfield_safe(out.diag, 'Rc_limit', NaN);
+                user_rate_std_all(trial_idx, ix, ia)      = getfield_safe(out.diag, 'user_rate_std', NaN);
+                common_power_ratio_raw_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'common_power_ratio_raw', NaN);
+                common_power_ratio_clipped_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'common_power_ratio_clipped', NaN);
+                common_cap_active_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'common_cap_active', NaN);
+                
+                temp_a = getfield_safe(out.diag, 'accept_assign', NaN);
+                accept_assign_all(trial_idx, ix, ia) = mean(temp_a);
+                temp_v = getfield_safe(out.diag, 'accept_v', NaN);
+                accept_v_all(trial_idx, ix, ia) = mean(temp_v);
+                temp_t = getfield_safe(out.diag, 'accept_theta', NaN);
+                accept_theta_all(trial_idx, ix, ia) = mean(temp_t);
+                
+                temp_tm = getfield_safe(out.diag, 'accept_theta_main', NaN);
+                accept_theta_main_all(trial_idx, ix, ia) = mean(temp_tm);
+                temp_tp = getfield_safe(out.diag, 'accept_theta_polish', NaN);
+                accept_theta_polish_all(trial_idx, ix, ia) = mean(temp_tp);
+                
+                temp_tn = getfield_safe(out.diag, 'theta_changed_norm', NaN);
+                theta_changed_norm_all(trial_idx, ix, ia) = mean(temp_tn);
+                temp_tnp = getfield_safe(out.diag, 'theta_changed_norm_polish', NaN);
+                theta_changed_norm_polish_all(trial_idx, ix, ia) = mean(temp_tnp);
+
+                common_shaved_power_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'common_shaved_power', NaN);
+                urgent_private_ratio_before_floor_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'urgent_private_ratio_before_floor', NaN);
+                urgent_private_ratio_after_floor_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'urgent_private_ratio_after_floor', NaN);
+                normal_to_urgent_transfer_power_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'normal_to_urgent_transfer_power', NaN);
+                
+                theta_pre_refit_improve_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'theta_pre_refit_improve', NaN);
+                theta_post_refit_improve_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'theta_post_refit_improve', NaN);
+                theta_refit_swallow_ratio_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'theta_refit_swallow_ratio', NaN);
+                private_first_budget_ratio_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'private_first_budget_ratio', NaN);
+                common_enabled_flag_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'common_enabled_flag', NaN);
+                common_marginal_gain_proxy_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'common_marginal_gain_proxy', NaN);
+                rebalance_triggered_flag_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'rebalance_triggered_flag', NaN);
+            else
+                common_power_ratio_all(trial_idx, ix, ia) = NaN;
+                private_rate_sum_all(trial_idx, ix, ia)   = NaN;
+                common_rate_sum_all(trial_idx, ix, ia)    = NaN;
+                Rc_limit_all(trial_idx, ix, ia)           = NaN;
+                user_rate_std_all(trial_idx, ix, ia)      = NaN;
+                common_power_ratio_raw_all(trial_idx, ix, ia) = NaN;
+                common_power_ratio_clipped_all(trial_idx, ix, ia) = NaN;
+                common_cap_active_all(trial_idx, ix, ia) = NaN;
+                accept_assign_all(trial_idx, ix, ia) = NaN;
+                accept_v_all(trial_idx, ix, ia) = NaN;
+                accept_theta_all(trial_idx, ix, ia) = NaN;
+                accept_theta_main_all(trial_idx, ix, ia) = NaN;
+                accept_theta_polish_all(trial_idx, ix, ia) = NaN;
+                theta_changed_norm_all(trial_idx, ix, ia) = NaN;
+                theta_changed_norm_polish_all(trial_idx, ix, ia) = NaN;
+                common_shaved_power_all(trial_idx, ix, ia) = NaN;
+                urgent_private_ratio_before_floor_all(trial_idx, ix, ia) = NaN;
+                urgent_private_ratio_after_floor_all(trial_idx, ix, ia) = NaN;
+                normal_to_urgent_transfer_power_all(trial_idx, ix, ia) = NaN;
+                
+                theta_pre_refit_improve_all(trial_idx, ix, ia) = NaN;
+                theta_post_refit_improve_all(trial_idx, ix, ia) = NaN;
+                theta_refit_swallow_ratio_all(trial_idx, ix, ia) = NaN;
+                private_first_budget_ratio_all(trial_idx, ix, ia) = NaN;
+                common_enabled_flag_all(trial_idx, ix, ia) = NaN;
+                common_marginal_gain_proxy_all(trial_idx, ix, ia) = NaN;
+                rebalance_triggered_flag_all(trial_idx, ix, ia) = NaN;
+            end
         end
     end
 
@@ -139,17 +269,52 @@ for trial_idx = 1:mc
 end
 
 stats = struct();
-[stats.urgent_qoe.mean, stats.urgent_qoe.ci95] = calc_mean_ci(urgent_qoe_all);
-[stats.avg_qoe.mean, stats.avg_qoe.ci95] = calc_mean_ci(avg_qoe_all);
-[stats.urgent_delay_vio.mean, stats.urgent_delay_vio.ci95] = calc_mean_ci(urgent_delay_vio_all);
-[stats.urgent_semantic_vio.mean, stats.urgent_semantic_vio.ci95] = calc_mean_ci(urgent_semantic_vio_all);
-[stats.sum_rate.mean, stats.sum_rate.ci95] = calc_mean_ci(sum_rate_all);
-[stats.urgent_sum_rate.mean, stats.urgent_sum_rate.ci95] = calc_mean_ci(urgent_sum_rate_all);
-[stats.urgent_avg_rate.mean, stats.urgent_avg_rate.ci95] = calc_mean_ci(urgent_avg_rate_all);
-[stats.ris_count.mean, stats.ris_count.ci95] = calc_mean_ci(ris_count_all);
-[stats.proposed_eval_calls.mean, stats.proposed_eval_calls.ci95] = calc_mean_ci2d(proposed_eval_calls_all);
-[stats.ga_rt_eval_calls.mean, stats.ga_rt_eval_calls.ci95] = calc_mean_ci2d(ga_rt_eval_calls_all);
-[stats.ga_rt_budget_target.mean, stats.ga_rt_budget_target.ci95] = calc_mean_ci2d(ga_rt_budget_target_all);
+[stats.urgent_qoe.mean, stats.urgent_qoe.ci95, stats.urgent_qoe.median] = calc_mean_ci(urgent_qoe_all);
+[stats.avg_qoe.mean, stats.avg_qoe.ci95, stats.avg_qoe.median] = calc_mean_ci(avg_qoe_all);
+[stats.urgent_delay_vio.mean, stats.urgent_delay_vio.ci95, stats.urgent_delay_vio.median] = calc_mean_ci(urgent_delay_vio_all);
+[stats.urgent_semantic_vio.mean, stats.urgent_semantic_vio.ci95, stats.urgent_semantic_vio.median] = calc_mean_ci(urgent_semantic_vio_all);
+[stats.sum_rate.mean, stats.sum_rate.ci95, stats.sum_rate.median] = calc_mean_ci(sum_rate_all);
+stats.sum_rate.std = squeeze(std(sum_rate_all, 0, 1));
+[stats.urgent_sum_rate.mean, stats.urgent_sum_rate.ci95, stats.urgent_sum_rate.median] = calc_mean_ci(urgent_sum_rate_all);
+stats.urgent_sum_rate.std = squeeze(std(urgent_sum_rate_all, 0, 1));
+[stats.urgent_avg_rate.mean, stats.urgent_avg_rate.ci95, stats.urgent_avg_rate.median] = calc_mean_ci(urgent_avg_rate_all);
+[stats.ris_count.mean, stats.ris_count.ci95, stats.ris_count.median] = calc_mean_ci(ris_count_all);
+[stats.common_power_ratio.mean, stats.common_power_ratio.ci95, stats.common_power_ratio.median] = calc_mean_ci(common_power_ratio_all);
+[stats.common_power_ratio_raw.mean, stats.common_power_ratio_raw.ci95, stats.common_power_ratio_raw.median] = calc_mean_ci(common_power_ratio_raw_all);
+[stats.common_power_ratio_clipped.mean, stats.common_power_ratio_clipped.ci95, stats.common_power_ratio_clipped.median] = calc_mean_ci(common_power_ratio_clipped_all);
+[stats.common_cap_active.mean, stats.common_cap_active.ci95, stats.common_cap_active.median] = calc_mean_ci(common_cap_active_all);
+stats.common_cap_active.std = squeeze(std(common_cap_active_all, 0, 1));
+stats.common_ratio_raw.mean = squeeze(mean(common_power_ratio_raw_all, 1));
+stats.common_ratio_clip.mean = squeeze(mean(common_power_ratio_clipped_all, 1));
+[stats.accept_assign.mean, stats.accept_assign.ci95, stats.accept_assign.median] = calc_mean_ci(accept_assign_all);
+[stats.accept_v.mean, stats.accept_v.ci95, stats.accept_v.median] = calc_mean_ci(accept_v_all);
+[stats.accept_theta.mean, stats.accept_theta.ci95, stats.accept_theta.median] = calc_mean_ci(accept_theta_all);
+
+[stats.accept_theta_main.mean, stats.accept_theta_main.ci95, stats.accept_theta_main.median] = calc_mean_ci(accept_theta_main_all);
+[stats.accept_theta_polish.mean, stats.accept_theta_polish.ci95, stats.accept_theta_polish.median] = calc_mean_ci(accept_theta_polish_all);
+[stats.theta_changed_norm.mean, stats.theta_changed_norm.ci95, stats.theta_changed_norm.median] = calc_mean_ci(theta_changed_norm_all);
+[stats.theta_changed_norm_polish.mean, stats.theta_changed_norm_polish.ci95, stats.theta_changed_norm_polish.median] = calc_mean_ci(theta_changed_norm_polish_all);
+
+[stats.common_shaved_power.mean, stats.common_shaved_power.ci95, stats.common_shaved_power.median] = calc_mean_ci(common_shaved_power_all);
+[stats.urgent_private_ratio_before_floor.mean, stats.urgent_private_ratio_before_floor.ci95, stats.urgent_private_ratio_before_floor.median] = calc_mean_ci(urgent_private_ratio_before_floor_all);
+[stats.urgent_private_ratio_after_floor.mean, stats.urgent_private_ratio_after_floor.ci95, stats.urgent_private_ratio_after_floor.median] = calc_mean_ci(urgent_private_ratio_after_floor_all);
+[stats.normal_to_urgent_transfer_power.mean, stats.normal_to_urgent_transfer_power.ci95, stats.normal_to_urgent_transfer_power.median] = calc_mean_ci(normal_to_urgent_transfer_power_all);
+
+[stats.theta_pre_refit_improve.mean, stats.theta_pre_refit_improve.ci95, stats.theta_pre_refit_improve.median] = calc_mean_ci(theta_pre_refit_improve_all);
+[stats.theta_post_refit_improve.mean, stats.theta_post_refit_improve.ci95, stats.theta_post_refit_improve.median] = calc_mean_ci(theta_post_refit_improve_all);
+[stats.theta_refit_swallow_ratio.mean, stats.theta_refit_swallow_ratio.ci95, stats.theta_refit_swallow_ratio.median] = calc_mean_ci(theta_refit_swallow_ratio_all);
+[stats.private_first_budget_ratio.mean, stats.private_first_budget_ratio.ci95, stats.private_first_budget_ratio.median] = calc_mean_ci(private_first_budget_ratio_all);
+[stats.common_enabled_flag.mean, stats.common_enabled_flag.ci95, stats.common_enabled_flag.median] = calc_mean_ci(common_enabled_flag_all);
+[stats.common_marginal_gain_proxy.mean, stats.common_marginal_gain_proxy.ci95, stats.common_marginal_gain_proxy.median] = calc_mean_ci(common_marginal_gain_proxy_all);
+[stats.rebalance_triggered_flag.mean, stats.rebalance_triggered_flag.ci95, stats.rebalance_triggered_flag.median] = calc_mean_ci(rebalance_triggered_flag_all);
+
+[stats.private_rate_sum.mean, stats.private_rate_sum.ci95, stats.private_rate_sum.median] = calc_mean_ci(private_rate_sum_all);
+[stats.common_rate_sum.mean, stats.common_rate_sum.ci95, stats.common_rate_sum.median] = calc_mean_ci(common_rate_sum_all);
+[stats.Rc_limit.mean, stats.Rc_limit.ci95, stats.Rc_limit.median] = calc_mean_ci(Rc_limit_all);
+[stats.user_rate_std.mean, stats.user_rate_std.ci95, stats.user_rate_std.median] = calc_mean_ci(user_rate_std_all);
+[stats.proposed_eval_calls.mean, stats.proposed_eval_calls.ci95, stats.proposed_eval_calls.median] = calc_mean_ci2d(proposed_eval_calls_all);
+[stats.ga_rt_eval_calls.mean, stats.ga_rt_eval_calls.ci95, stats.ga_rt_eval_calls.median] = calc_mean_ci2d(ga_rt_eval_calls_all);
+[stats.ga_rt_budget_target.mean, stats.ga_rt_budget_target.ci95, stats.ga_rt_budget_target.median] = calc_mean_ci2d(ga_rt_budget_target_all);
 stats = ensure_urgent_rate_metrics(stats);
 
 fig_dir = fullfile(proj_root, 'figures');
@@ -158,17 +323,48 @@ if ~exist(fig_dir, 'dir'), mkdir(fig_dir); end
 if ~exist(res_dir, 'dir'), mkdir(res_dir); end
 
 if p.Results.save_figures
-    [plot_idx, plot_labels] = get_plot_view(alg_names, p.Results.show_ga_ub);
-    plot_ci_lines(ris_list, stats.urgent_qoe.mean(:, plot_idx), stats.urgent_qoe.ci95(:, plot_idx), plot_labels, ...
-        'Number of RIS (L)', 'Urgent QoE Cost', 'Urgent QoE Cost vs RIS Count', ...
-        fullfile(fig_dir, [out_name '_urgent_qoe_cost.png']));
+    xlab = 'Number of RIS Elements per RIS (L)';
+    plot_ci_lines(ris_list, stats.urgent_qoe.mean, stats.urgent_qoe.ci95, alg_names, ...
+        xlab, 'Urgent QoE Cost (J^{urg})', 'Urgent QoE vs. L', ...
+        fullfile(fig_dir, 'Fig_L_UrgentQoE.png'));
 
-    plot_ci_lines(ris_list, stats.avg_qoe.mean(:, plot_idx), stats.avg_qoe.ci95(:, plot_idx), plot_labels, ...
-        'Number of RIS (L)', 'Avg QoE Cost', 'Average QoE Cost vs RIS Count', ...
-        fullfile(fig_dir, [out_name '_avg_qoe_cost.png']));
-    plot_ci_lines(ris_list, stats.urgent_sum_rate.mean(:, plot_idx) / 1e6, stats.urgent_sum_rate.ci95(:, plot_idx) / 1e6, plot_labels, ...
-        'Number of RIS (L)', 'Urgent Sum-Rate (Mbps)', 'Urgent Sum-Rate vs RIS Count', ...
-        fullfile(fig_dir, [out_name '_urgent_sum_rate.png']));
+    plot_ci_lines(ris_list, stats.avg_qoe.mean, stats.avg_qoe.ci95, alg_names, ...
+        xlab, 'Average QoE Cost', 'Avg QoE vs. L', ...
+        fullfile(fig_dir, 'Fig_L_AvgQoE.png'));
+
+    if isfield(stats, 'urgent_sum_rate')
+        plot_ci_lines(ris_list, stats.urgent_sum_rate.mean / 1e6, stats.urgent_sum_rate.ci95 / 1e6, alg_names, ...
+            xlab, 'Urgent Sum Rate (Mbps)', 'Urgent Sum Rate vs. L', ...
+            fullfile(fig_dir, 'Fig_L_UrgentSumRate.png'));
+    end
+    
+    if isfield(stats, 'sum_rate')
+        plot_ci_lines(ris_list, stats.sum_rate.mean / 1e6, stats.sum_rate.ci95 / 1e6, alg_names, ...
+            xlab, 'Total Sum Rate (Mbps)', 'Total Sum Rate vs. L', ...
+            fullfile(fig_dir, 'Fig_L_TotalSumRate.png'));
+    end
+
+    if isfield(stats, 'common_power_ratio')
+        plot_ci_lines(ris_list, stats.common_power_ratio.mean, stats.common_power_ratio.ci95, alg_names, ...
+            xlab, 'Common Power Ratio', 'Common Power Ratio vs. L', ...
+            fullfile(fig_dir, 'Fig_L_CommonPowerRatio.png'));
+    end
+    
+    if isfield(stats, 'common_cap_active')
+        plot_ci_lines(ris_list, stats.common_cap_active.mean, stats.common_cap_active.ci95, alg_names, ...
+            xlab, 'Common Cap Active Rate', 'Common Cap Active Rate vs. L', ...
+            fullfile(fig_dir, 'Fig_L_CommonCapActive.png'));
+    end
+    if isfield(stats, 'common_power_ratio_raw')
+        plot_ci_lines(ris_list, stats.common_power_ratio_raw.mean, stats.common_power_ratio_raw.ci95, alg_names, ...
+            xlab, 'Common Power Ratio (Raw)', 'Common Power Ratio Raw vs. L', ...
+            fullfile(fig_dir, 'Fig_L_CommonPowerRatioRaw.png'));
+    end
+    if isfield(stats, 'accept_theta')
+        plot_ci_lines(ris_list, stats.accept_theta.mean, stats.accept_theta.ci95, alg_names, ...
+            xlab, 'Theta Acceptance Rate', 'Theta Acceptance Rate vs. L', ...
+            fullfile(fig_dir, 'Fig_L_AcceptTheta.png'));
+    end
 end
 
 run_id = out_name;
@@ -179,9 +375,17 @@ csv_path = fullfile(res_dir, [base '.csv']);
 
 if p.Results.save_mat
     save(mat_path, 'alg_names', 'ris_list', 'mc', 'seed', 'p_dbw', ...
-        'urgent_qoe_all', 'avg_qoe_all', 'urgent_delay_vio_all', 'urgent_semantic_vio_all', ...
+        'urgent_qoe_all', 'avg_qoe_all', 'avg_qoe_composite_all', 'common_struct_pen_all', ...
+        'urgent_delay_vio_all', 'urgent_semantic_vio_all', ...
         'sum_rate_all', 'urgent_sum_rate_all', 'urgent_avg_rate_all', 'ris_count_all', ...
         'proposed_eval_calls_all', 'ga_rt_eval_calls_all', 'ga_rt_budget_target_all', ...
+        'common_power_ratio_all', 'private_rate_sum_all', 'common_rate_sum_all', 'Rc_limit_all', 'user_rate_std_all', ...
+        'common_power_ratio_raw_all', 'common_power_ratio_clipped_all', 'common_cap_active_all', ...
+        'accept_assign_all', 'accept_v_all', 'accept_theta_all', 'accept_theta_main_all', 'accept_theta_polish_all', ...
+        'theta_changed_norm_all', 'theta_changed_norm_polish_all', 'common_shaved_power_all', ...
+        'urgent_private_ratio_before_floor_all', 'urgent_private_ratio_after_floor_all', 'normal_to_urgent_transfer_power_all', ...
+        'theta_pre_refit_improve_all', 'theta_post_refit_improve_all', 'theta_refit_swallow_ratio_all', ...
+        'private_first_budget_ratio_all', 'common_enabled_flag_all', 'common_marginal_gain_proxy_all', 'rebalance_triggered_flag_all', ...
         'stats');
 end
 
@@ -211,21 +415,24 @@ if p.Results.save_csv
 end
 
 fprintf('\nSaved:\n');
-fprintf('  %s\n', fullfile(fig_dir, [out_name '_urgent_qoe_cost.png']));
-fprintf('  %s\n', fullfile(fig_dir, [out_name '_avg_qoe_cost.png']));
-fprintf('  %s\n', fullfile(fig_dir, [out_name '_urgent_sum_rate.png']));
+fprintf('  %s\n', fullfile(fig_dir, 'Fig_L_UrgentQoE.png'));
+fprintf('  %s\n', fullfile(fig_dir, 'Fig_L_AvgQoE.png'));
+fprintf('  %s\n', fullfile(fig_dir, 'Fig_L_UrgentSumRate.png'));
+fprintf('  %s\n', fullfile(fig_dir, 'Fig_L_TotalSumRate.png'));
+fprintf('  %s\n', fullfile(fig_dir, 'Fig_L_CommonPowerRatio.png'));
 fprintf('  %s\n', mat_path);
 fprintf('  %s\n', json_path);
 fprintf('  %s\n', csv_path);
 end
 
-function [mu, ci95] = calc_mean_ci(x)
+function [mu, ci95, med] = calc_mean_ci(x)
 mc = size(x, 1);
 num_x = size(x, 2);
 num_alg = size(x, 3);
 mu = reshape(mean(x, 1), [num_x, num_alg]);
 sd = reshape(std(x, 0, 1), [num_x, num_alg]);
 ci95 = 1.96 * sd / sqrt(mc);
+med = reshape(median(x, 1), [num_x, num_alg]);
 end
 
 function plot_ci_lines(x, y_mean, y_ci, alg_names, x_label, y_label, fig_title, out_path)
@@ -246,6 +453,22 @@ ylabel(y_label);
 title(fig_title);
 xticks(x(:).');
 legend('Location', 'best');
+
+% --- 新增：物理量程强制锁定 ---
+% 如果是 QoE 成本或违约率，它们的物理取值域严格在 [0, 1]
+if contains(y_label, 'QoE') || contains(y_label, 'Violation')
+    y_limits = ylim;
+    upper_lim = max(1.0, ceil(y_limits(2) / 0.2) * 0.2);
+    if upper_lim > 1.0
+        ylim([0, upper_lim]);
+        yticks(0:0.2:upper_lim);
+    else
+        ylim([0, 1]);
+        yticks(0:0.2:1);
+    end
+end
+% ------------------------------
+
 saveas(fig, out_path);
 close(fig);
 end
@@ -417,14 +640,11 @@ qs = out.Qs_vec(:);
 if any(~isfinite(q)) || any(~isfinite(qd)) || any(~isfinite(qs))
     error('paper_sweep_ris_count:nonfinite_qoe', 'Non-finite QoE/Qd/Qs at %s', ctx);
 end
-if any(q < -tol_q) || any(q > 1 + tol_q)
-    error('paper_sweep_ris_count:qoe_out_of_range', 'QoE out of [0,1] at %s', ctx);
+if any(qd < -tol_q)
+    error('paper_sweep_ris_count:qd_out_of_range', 'Qd out of [0,inf) at %s', ctx);
 end
-if any(qd < -tol_q) || any(qd > 1 + tol_q)
-    error('paper_sweep_ris_count:qd_out_of_range', 'Qd out of [0,1] at %s', ctx);
-end
-if any(qs < -tol_q) || any(qs > 1 + tol_q)
-    error('paper_sweep_ris_count:qs_out_of_range', 'Qs out of [0,1] at %s', ctx);
+if any(qs < -tol_q)
+    error('paper_sweep_ris_count:qs_out_of_range', 'Qs out of [0,inf) at %s', ctx);
 end
 
 sanity.qoe_min = min(sanity.qoe_min, min(q));
@@ -437,7 +657,12 @@ end
 
 function write_summary_csv(csv_path, ris_list, alg_names, stats)
 metrics = {'urgent_qoe', 'avg_qoe', 'urgent_delay_vio', 'urgent_semantic_vio', 'sum_rate', ...
-           'urgent_sum_rate', 'urgent_avg_rate', 'ris_count'};
+           'urgent_sum_rate', 'urgent_avg_rate', 'ris_count', ...
+        'common_power_ratio', 'private_rate_sum', 'common_rate_sum', 'Rc_limit', 'user_rate_std', ...
+        'accept_theta_main', 'accept_theta_polish', 'theta_changed_norm', 'theta_changed_norm_polish', ...
+        'common_shaved_power', 'urgent_private_ratio_before_floor', 'urgent_private_ratio_after_floor', 'normal_to_urgent_transfer_power', ...
+        'theta_pre_refit_improve', 'theta_post_refit_improve', 'theta_refit_swallow_ratio', ...
+        'private_first_budget_ratio', 'common_enabled_flag', 'common_marginal_gain_proxy', 'rebalance_triggered_flag'};
 fid = fopen(csv_path, 'w');
 if fid < 0
     error('Cannot open CSV file for writing: %s', csv_path);
@@ -458,13 +683,15 @@ end
 clear cleanup_obj;
 end
 
-function [mu, ci95] = calc_mean_ci2d(x)
+function [mu, ci95, med] = calc_mean_ci2d(x)
 mc = size(x, 1);
 mu = mean(x, 1, 'omitnan');
 sd = std(x, 0, 1, 'omitnan');
 ci95 = 1.96 * sd / sqrt(mc);
+med = median(x, 1, 'omitnan');
 mu = mu(:).';
 ci95 = ci95(:).';
+med = med(:).';
 end
 
 function write_text_file(path_name, txt)
@@ -544,9 +771,35 @@ end
 mu = stats.sum_rate.mean;
 ci = stats.sum_rate.ci95;
 if ~isfield(stats, 'urgent_sum_rate')
-    stats.urgent_sum_rate = struct('mean', nan(size(mu)), 'ci95', nan(size(ci)));
+    stats.urgent_sum_rate = struct('mean', nan(size(mu)), 'ci95', nan(size(ci)), 'median', nan(size(ci)));
 end
 if ~isfield(stats, 'urgent_avg_rate')
-    stats.urgent_avg_rate = struct('mean', nan(size(mu)), 'ci95', nan(size(ci)));
+    stats.urgent_avg_rate = struct('mean', nan(size(mu)), 'ci95', nan(size(ci)), 'median', nan(size(ci)));
+end
+end
+
+function v = getfield_safe(s, name, defaultv)
+    if isstruct(s) && isfield(s, name)
+        v = s.(name);
+    else
+        v = defaultv;
+    end
+end
+
+function sol2 = expand_solution_over_L(sol1, n_ris_new)
+sol2 = sol1;
+if isempty(sol1) || ~isfield(sol1, 'theta_all') || isempty(sol1.theta_all)
+    return;
+end
+
+[n_old, ~] = size(sol1.theta_all);
+
+if n_ris_new > n_old
+    extra = n_ris_new - n_old;
+    pad_phase = angle(mean(sol1.theta_all, 1));
+    theta_pad = exp(1j * repmat(pad_phase, extra, 1));
+    sol2.theta_all = [sol1.theta_all; theta_pad];
+else
+    sol2.theta_all = sol1.theta_all(1:n_ris_new, :);
 end
 end
