@@ -49,8 +49,8 @@ gamma_p = zeros(K, 1);
 
 for k = 1:K
     hk = ch.h_d(:, k);
-    l = assign(k);
-    if l > 0
+    l = assign(k);  % user k is assigned to RIS l (0 = direct only)
+    if l > 0 && l <= cfg.num_ris
         hk = hk + cfg.ris_gain * ch.G(:, :, l) * (theta_all(:, l) .* ch.H_ris(:, k, l));
     end
 
@@ -61,6 +61,8 @@ for k = 1:K
     gamma_p(k) = abs(hk' * V_p(:, k))^2 / (interf_private + noise);
 end
 
+% --- 阶段三：增加物理层 SIC 成功率校验 ---
+R_c_capacity = cfg.bandwidth .* log2(1 + gamma_c + cfg.eps);
 rate_private_bps = cfg.bandwidth .* log2(1 + gamma_p + cfg.eps);
 % Reuse existing RSMA definition: per-user total rate = private rate + allocated common-rate share.
 rate_total_bps = (rate_private_bps + c_vec);
@@ -72,8 +74,31 @@ normal_idx = group_idx.normal_idx;
 urgent_sum_rate_bps = sum(rate_total_bps(urgent_idx)); % bps
 urgent_avg_rate_bps = mean(rate_total_bps(urgent_idx)); % bps
 
-% Semantic mapping must use gamma_p (private stream SINR).
-xi = semantic_map(gamma_p, profile.M_k, semantic_mode, table_path, semantic_params);
+% Semantic mapping uses combined SINR + SIC Validation.
+R_c_total = sum(c_vec); % RSMA要求用户解出完整的公共消息
+
+gamma_sem = zeros(K, 1);
+for k = 1:K
+    R_c_capacity = cfg.bandwidth * log2(1 + gamma_c(k));
+    
+    % 对比的是 R_c_total，并允许 1e-3 的浮点宽容度
+    if R_c_capacity >= R_c_total - 1e-3 
+        gamma_sem(k) = gamma_c(k) + gamma_p(k); % SIC 成功
+    else
+        % 否则，公共流将无法被剥离，成为毁灭性的残余干扰
+        hk = ch.h_d(:, k);
+        l = assign(k);
+        if l > 0 && l <= cfg.num_ris
+            hk = hk + cfg.ris_gain * ch.G(:, :, l) * (theta_all(:, l) .* ch.H_ris(:, k, l));
+        end
+        % 重新计算包含公共流干扰的私有流 SINR
+        interf_all_with_c = sum(abs(hk' * V_p).^2) + abs(hk' * v_c)^2;
+        interf_private_with_c = interf_all_with_c - abs(hk' * V_p(:, k))^2;
+        gamma_sem(k) = abs(hk' * V_p(:, k))^2 / (interf_private_with_c + noise);
+    end
+end
+
+xi = semantic_map(gamma_sem, profile.M_k, semantic_mode, table_path, semantic_params);
 D = 1 - xi;
 
 prop_delay = calc_prop_delay(cfg, geom, assign, prop_delay_opts);
@@ -86,10 +111,22 @@ semantic_vio_vec = (D > profile.dmax_k);
 
 out.sum_rate_bps = sum_rate_bps;
 out.rate_vec_bps = rate_total_bps; % Kx1 per-user total rate, bps
+out.user_rate = rate_total_bps;
 out.urgent_sum_rate_bps = urgent_sum_rate_bps; % bps
 out.urgent_avg_rate_bps = urgent_avg_rate_bps; % bps
 out.avg_qoe = avg_qoe;
+out.avg_qoe_pure = avg_qoe;
 out.qoe_vec = qoe_vec;
+out.qoe_user = qoe_vec;
+
+out.common_struct_pen = 0;
+if isfield(sol, 'V') && isfield(sol.V, 'diag') && isfield(sol.V.diag, 'common_excess_penalty')
+    out.common_struct_pen = sol.V.diag.common_excess_penalty;
+end
+
+out.composite_cost = out.avg_qoe_pure + out.common_struct_pen;
+out.delay_violation_user = delay_vio_vec;
+out.semantic_violation_user = semantic_vio_vec;
 out.gamma_p = gamma_p;
 out.gamma_c = gamma_c;
 out.rate_private_bps = rate_private_bps;
@@ -101,10 +138,90 @@ out.delay_vio_vec = logical(delay_vio_vec);
 out.semantic_vio_vec = logical(semantic_vio_vec);
 out.delay_vio_rate_all = mean(delay_vio_vec);
 out.semantic_vio_rate_all = mean(semantic_vio_vec);
+out.T_tx_mean_all = mean(meta.T_tx); % [Antigravity Fix]
+out.xi_mean_all = mean(xi); % [Antigravity Fix]
 out.Qd_mean_all = mean(meta.Qd);
 out.Qs_mean_all = mean(meta.Qs);
 out.Qd_vec = meta.Qd(:);
 out.Qs_vec = meta.Qs(:);
+
+if isfield(sol, 'V') && isfield(sol.V, 'diag')
+    out.diag = sol.V.diag;
+end
+
+% Add minimal diagnostic outputs for structural health monitoring
+if ~isfield(out, 'diag')
+    out.diag = struct();
+end
+
+% Compute common_dominance_index (ratio of common power to total power)
+P_common = norm(v_c)^2;
+P_total = P_common + sum(sum(abs(V_p).^2));
+if P_total > 0
+    out.diag.common_dominance_index = P_common / P_total;
+else
+    out.diag.common_dominance_index = 0;
+end
+
+% Compute urgent_private_support_ratio (private power allocated to urgent users / total urgent user power)
+if ~isempty(urgent_idx)
+    P_urgent_private = sum(sum(abs(V_p(:, urgent_idx)).^2));
+    P_urgent_total = P_urgent_private + sum(c_vec(urgent_idx));
+    if P_urgent_total > 0
+        out.diag.urgent_private_support_ratio = P_urgent_private / P_urgent_total;
+    else
+        out.diag.urgent_private_support_ratio = 0;
+    end
+else
+    out.diag.urgent_private_support_ratio = NaN;
+end
+
+% Compute bottleneck_urgent_rate (minimum rate among urgent users)
+if ~isempty(urgent_idx)
+    out.diag.bottleneck_urgent_rate = min(rate_total_bps(urgent_idx));
+else
+    out.diag.bottleneck_urgent_rate = NaN;
+end
+
+% Pass through refit_swallow_ratio and theta_helped_but_refit_killed_flag from submodules
+if isfield(sol, 'V') && isfield(sol.V, 'diag')
+    if isfield(sol.V.diag, 'refit_swallow_ratio')
+        out.diag.refit_swallow_ratio = sol.V.diag.refit_swallow_ratio;
+    end
+    if isfield(sol.V.diag, 'theta_helped_but_refit_killed_flag')
+        out.diag.theta_helped_but_refit_killed_flag = sol.V.diag.theta_helped_but_refit_killed_flag;
+    end
+end
+
+
+
+out.total_sum_rate = sum_rate_bps;
+
+if ~isempty(urgent_idx)
+    out.urgent_sum_rate = urgent_sum_rate_bps;
+    out.urgent_avg_rate = urgent_avg_rate_bps;
+    out.urgent_qoe = mean(qoe_vec(urgent_idx));
+    out.urgent_delay_violation = mean(out.delay_violation_user(urgent_idx));
+    out.urgent_semantic_violation = mean(out.semantic_violation_user(urgent_idx));
+    out.urgent_T_tx_mean = mean(meta.T_tx(urgent_idx));
+else
+    out.urgent_sum_rate = 0;
+    out.urgent_avg_rate = 0;
+    out.urgent_qoe = 1;
+    out.urgent_delay_violation = 1;
+    out.urgent_semantic_violation = 1;
+    out.urgent_T_tx_mean = NaN;
+end
+
+if ~isempty(normal_idx)
+    out.normal_avg_rate = mean(out.user_rate(normal_idx));
+    out.normal_sum_rate = sum(out.user_rate(normal_idx));
+    out.normal_qoe = mean(out.qoe_user(normal_idx));
+else
+    out.normal_avg_rate = 0;
+    out.normal_sum_rate = 0;
+    out.normal_qoe = inf;
+end
 
 if debug_eval
     rate_gap = abs(sum(out.rate_vec_bps) - out.sum_rate_bps) / max(1, out.sum_rate_bps);
