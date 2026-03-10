@@ -81,6 +81,60 @@ diag_up_before = NaN;
 diag_up_after = NaN;
 diag_transfer_pwr = 0;
 
+% ===== Task 2: Private-First Budget Allocation and Common Gating =====
+% Implement "default off, enable only if conditions met" for common stream
+enable_private_first = get_cfg(cfg, 'enable_private_first_rsma', false);
+common_enabled_global = true; % Default: common enabled (backward compatible)
+
+if enable_private_first
+    % Task 2A: Gate common stream based on strict conditions
+    % Compute residual power after private allocation
+    Pc_current = norm(v_c)^2;
+    Pp_current = sum(sum(abs(V_p).^2));
+    Pt_current = Pc_current + Pp_current;
+    P_res = Pt_current - Pp_current; % Residual after private
+    
+    % Get gating parameters
+    min_common_residual_ratio = get_cfg(cfg, 'min_common_residual_ratio', 0.10);
+    common_enable_threshold = get_cfg(cfg, 'common_enable_threshold', 0.02);
+    urgent_private_gate_min = get_cfg(cfg, 'urgent_private_gate_min', 0.50);
+    raw_common_soft_ceiling = get_cfg(cfg, 'raw_common_soft_ceiling', 0.45);
+    
+    % Compute current metrics
+    raw_common_prev = Pc_current / max(Pt_current, 1e-12);
+    
+    urgent_idx = find(is_urgent(:) > 0);
+    if ~isempty(urgent_idx)
+        P_urgent_private = sum(sum(abs(V_p(:, urgent_idx)).^2));
+        urgent_private_ratio = P_urgent_private / max(Pp_current, 1e-12);
+    else
+        urgent_private_ratio = 1.0; % No urgent users, assume satisfied
+    end
+    
+    % Compute common_marginal_gain_proxy (simplified version for gating)
+    % This will be refined in the main loop
+    common_marginal_gain_proxy_gate = 0.0; % Placeholder, will be computed properly
+    
+    % Check all gating conditions (ALL must be satisfied to enable common)
+    condition_1 = (P_res / max(Pt_current, 1e-12)) >= min_common_residual_ratio;
+    condition_2 = common_marginal_gain_proxy_gate >= common_enable_threshold;
+    condition_3 = urgent_private_ratio >= urgent_private_gate_min;
+    condition_4 = raw_common_prev <= raw_common_soft_ceiling;
+    
+    % For first iteration, use relaxed gating (only check residual and ceiling)
+    % Full gating will be applied at the end of iterations
+    common_enabled_global = condition_1 && condition_4;
+    
+    if ~common_enabled_global
+        % Disable common stream: set v_c to zero or very weak
+        v_c = zeros(size(v_c)); % Completely disable
+        % Redistribute power to private streams
+        if Pc_current > 1e-9
+            V_p = V_p * sqrt((Pp_current + Pc_current) / max(Pp_current, 1e-12));
+        end
+    end
+end
+
 % 迭代更新
 for iter = 1:max_iter
     % --- Step A: 更新 MMSE 接收器 u ---
@@ -210,6 +264,24 @@ for iter = 1:max_iter
     A_common_eff = A_common + lambda_common_eff * eye(size(A_common));
 
     [v_c_tmp, V_p_tmp, p_tmp] = update_precoders(A_common_eff, A_all, b_c, B_p, mu_low, cfg.eps);
+    
+    % Task 3A: Enforce residual common power constraint
+    % Common stream can only use hard residual, not eat back into private budget
+    if enable_private_first && common_enabled_global
+        Pc_tmp = norm(v_c_tmp)^2;
+        Pp_tmp = sum(sum(abs(V_p_tmp).^2));
+        P_res_tmp = p_watts - Pp_tmp; % Hard residual after private
+        
+        eta_common_res = get_cfg(cfg, 'eta_common_res', 0.6);
+        Pc_max_allowed = eta_common_res * max(P_res_tmp, 0);
+        
+        if Pc_tmp > Pc_max_allowed
+            % Scale down common beamformer to respect residual constraint
+            scale_c_res = sqrt(Pc_max_allowed / max(Pc_tmp, 1e-12));
+            v_c_tmp = v_c_tmp * scale_c_res;
+        end
+    end
+    
     if p_tmp <= p_watts * 1.001
         v_c = v_c_tmp;
         V_p = V_p_tmp;
@@ -419,13 +491,13 @@ for iter = 1:max_iter
         end
     end
     
-    % --- Task 2.4: Common Stream Marginal Gain Gating ---
+    % --- Task 2.4 & Task 4: Common Stream Marginal Gain Gating (with real decision power) ---
     % Evaluate whether common stream provides marginal benefit for urgent users
     % If not, set common beamformer to zero and keep all power in private streams
     % This is done at the end of the last iteration, after all power allocation is complete
     if iter == max_iter
         enable_marginal_gate = get_cfg(cfg, 'enable_common_marginal_gate', false);
-        common_enabled = NaN; % Will be set if gating is enabled
+        common_enabled = common_enabled_global; % Start with global gate result
         common_marginal_gain_proxy = NaN;
         
         if enable_marginal_gate
@@ -473,32 +545,23 @@ for iter = 1:max_iter
                     common_marginal_gain_proxy = marginal_gain_urgent_rate / max(urgent_rate_without, 1e6) + ...
                                                  0.1 * marginal_gain_rc_limit / 1e6;
                     
-                    % Decision criteria for enabling common stream:
-                    % 1. min_common_SINR too low (< 0 dB) - common stream needed for basic feasibility
-                    % 2. common helps urgent feasibility (marginal gain > threshold)
-                    % 3. urgent violation high (delay or semantic violation > threshold)
+                    % Task 4: Ensure common_marginal_gain_proxy truly controls enable/disable
+                    % Get threshold from config
+                    common_enable_threshold = get_cfg(cfg, 'common_enable_threshold', 0.02);
                     
-                    min_gamma_c = min(gamma_c_with);
-                    urgent_delay_vio = get_cfg(cfg, 'urgent_delay_vio', 0.0);
-                    urgent_sem_vio = get_cfg(cfg, 'urgent_sem_vio', 0.0);
-                    
-                    % Thresholds
-                    min_sinr_threshold = 0.5; % -3 dB in linear scale
-                    marginal_gain_threshold = -0.05; % Allow small negative margin
-                    violation_threshold = 0.3;
-                    
-                    % Enable common stream if any condition is met
-                    common_enabled = (min_gamma_c < min_sinr_threshold) || ...
-                                     (common_marginal_gain_proxy > marginal_gain_threshold) || ...
-                                     (max(urgent_delay_vio, urgent_sem_vio) > violation_threshold);
-                    
-                    % If common stream provides negative marginal gain and conditions not met, disable it
-                    if ~common_enabled
+                    % CRITICAL: If marginal gain below threshold, disable common
+                    if common_marginal_gain_proxy < common_enable_threshold
+                        common_enabled = false;
+                        common_enabled_flag = 0;
+                        
                         % Set common beamformer to zero
                         v_c = zeros(size(v_c));
                         
-                        % Redistribute power to private streams (already computed in V_p_hypo)
+                        % Redistribute power to private streams
                         V_p = V_p_hypo;
+                    else
+                        common_enabled = true;
+                        common_enabled_flag = 1;
                     end
                 else
                     % No urgent users - use simpler criterion based on min SINR
@@ -508,10 +571,18 @@ for iter = 1:max_iter
                     if ~common_enabled
                         v_c = zeros(size(v_c));
                         V_p = V_p * sqrt((Pp_current + Pc_current) / max(Pp_current, 1e-12));
+                        common_enabled_flag = 0;
+                    else
+                        common_enabled_flag = 1;
                     end
                     
                     common_marginal_gain_proxy = 0.0;
                 end
+            else
+                % Common power already zero
+                common_enabled = false;
+                common_enabled_flag = 0;
+                common_marginal_gain_proxy = 0.0;
             end
         end
     end
@@ -608,7 +679,9 @@ else
     aux.common_marginal_gain_proxy = NaN;
 end
 
-if exist('common_enabled', 'var')
+if exist('common_enabled_flag', 'var')
+    aux.common_enabled_flag = double(common_enabled_flag);
+elseif exist('common_enabled', 'var')
     aux.common_enabled_flag = double(common_enabled);
 else
     aux.common_enabled_flag = NaN;
