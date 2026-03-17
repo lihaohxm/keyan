@@ -82,20 +82,42 @@ if isfield(cfg, 'max_ratio_s') && ~isempty(cfg.max_ratio_s) && cfg.max_ratio_s >
     ratio_s = min(ratio_s, cfg.max_ratio_s);
 end
 
-Qd_sig = 1 ./ (1 + exp(-cfg.beta_d .* (ratio_d - 1)));
-Qs_sig = 1 ./ (1 + exp(-cfg.beta_s .* (ratio_s - 1)));
+% Shift the sigmoid center earlier than the hard limit so moderately tight
+% low-power / low-L cases do not collapse toward zero cost too early.
+delay_ratio_center = get_cfg_or_default(cfg, 'delay_ratio_center', 1.0);
+semantic_ratio_center = get_cfg_or_default(cfg, 'semantic_ratio_center', 1.0);
+Qd_sig = 1 ./ (1 + exp(-cfg.b_d .* (ratio_d - delay_ratio_center)));
+Qs_sig = 1 ./ (1 + exp(-cfg.b_s .* (ratio_s - semantic_ratio_center)));
 
 penalty_d = cfg.h_d .* max(0, ratio_d - 1);
-penalty_s = cfg.h_s .* max(0, ratio_s - 1);
+delay_soft_trigger = get_cfg_or_default(cfg, 'delay_soft_ratio_trigger', 1.0);
+delay_soft_penalty = get_cfg_or_default(cfg, 'delay_soft_penalty', 0.0);
+if delay_soft_trigger < 1
+    delay_soft_scale = max(1 - delay_soft_trigger, cfg.eps);
+    penalty_d = penalty_d + delay_soft_penalty .* ...
+        (max(0, ratio_d - delay_soft_trigger) ./ delay_soft_scale) .^ 2;
+end
+semantic_penalty_power = 2.0;
+if isfield(cfg, 'semantic_penalty_power') && ~isempty(cfg.semantic_penalty_power)
+    semantic_penalty_power = cfg.semantic_penalty_power;
+end
+penalty_s = cfg.h_s .* max(0, ratio_s - 1) .^ semantic_penalty_power;
+semantic_soft_trigger = get_cfg_or_default(cfg, 'semantic_soft_ratio_trigger', 1.0);
+semantic_soft_penalty = get_cfg_or_default(cfg, 'semantic_soft_penalty', 0.0);
+if semantic_soft_trigger < 1
+    semantic_soft_scale = max(1 - semantic_soft_trigger, cfg.eps);
+    penalty_s = penalty_s + semantic_soft_penalty .* ...
+        (max(0, ratio_s - semantic_soft_trigger) ./ semantic_soft_scale) .^ 2;
+end
 
-Qd = Qd_sig;
-Qs = Qs_sig;
+Qd = Qd_sig + penalty_d; % [Antigravity Fix]
+Qs = Qs_sig + penalty_s; % [Antigravity Fix]
 
 if any(~isfinite(Qd)) || any(~isfinite(Qs))
     error('qoe:nonfinite_q', 'Non-finite Qd/Qs encountered.');
 end
-if any(Qd < -1e-12) || any(Qd > 1 + 1e-12) || any(Qs < -1e-12) || any(Qs > 1 + 1e-12)
-    error('qoe:q_out_of_range', 'Qd/Qs must lie in [0,1].');
+if any(Qd < -1e-12) || any(Qs < -1e-12)
+    error('qoe:q_out_of_range', 'Qd/Qs must be >= 0.');
 end
 
 w_sum = w_d + w_s;
@@ -106,8 +128,8 @@ w_d_n = w_d ./ w_sum;
 w_s_n = w_s ./ w_sum;
 
 qoe_vec = w_d_n .* Qd + w_s_n .* Qs;
-if any(qoe_vec < -1e-12) || any(qoe_vec > 1 + 1e-12) || any(~isfinite(qoe_vec))
-    error('qoe:qoe_out_of_range', 'QoE must lie in [0,1] and be finite.');
+if any(qoe_vec < -1e-12) || any(~isfinite(qoe_vec))
+    error('qoe:qoe_out_of_range', 'QoE must be >= 0 and finite.');
 end
 avg_qoe = mean(qoe_vec);
 
@@ -126,4 +148,12 @@ meta.penalty_s = penalty_s;
 meta.Qd_with_penalty = Qd_sig + penalty_d;
 meta.Qs_with_penalty = Qs_sig + penalty_s;
 
+end
+
+function v = get_cfg_or_default(cfg, field_name, default_v)
+if isfield(cfg, field_name) && ~isempty(cfg.(field_name))
+    v = cfg.(field_name);
+else
+    v = default_v;
+end
 end

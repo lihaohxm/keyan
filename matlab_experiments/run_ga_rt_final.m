@@ -381,7 +381,7 @@ switch lower(alg)
         opts.profile = profile;
         opts.semantic_mode = cfg.semantic_mode;
         opts.table_path = cfg.semantic_table;
-        opts.theta_strategy = 'random_fixed';
+        opts.theta_strategy = 'align_fixed';
         opts.pop_size = cfg_rt.pop_size;
         opts.num_generations = cfg_rt.num_generations;
         target = cfg_rt.budget_evals;

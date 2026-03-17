@@ -61,7 +61,7 @@ for k = 1:K
     gamma_p(k) = abs(hk' * V_p(:, k))^2 / (interf_private + noise);
 end
 
-% --- 阶段三：增加物理层 SIC 成功率校验 ---
+% --- 闃舵涓夛細澧炲姞鐗╃悊灞?SIC 鎴愬姛鐜囨牎楠?---
 R_c_capacity = cfg.bandwidth .* log2(1 + gamma_c + cfg.eps);
 rate_private_bps = cfg.bandwidth .* log2(1 + gamma_p + cfg.eps);
 % Reuse existing RSMA definition: per-user total rate = private rate + allocated common-rate share.
@@ -75,23 +75,22 @@ urgent_sum_rate_bps = sum(rate_total_bps(urgent_idx)); % bps
 urgent_avg_rate_bps = mean(rate_total_bps(urgent_idx)); % bps
 
 % Semantic mapping uses combined SINR + SIC Validation.
-R_c_total = sum(c_vec); % RSMA要求用户解出完整的公共消息
-
+R_c_total = sum(c_vec); % RSMA瑕佹眰鐢ㄦ埛瑙ｅ嚭瀹屾暣鐨勫叕鍏辨秷鎭?
 gamma_sem = zeros(K, 1);
 for k = 1:K
     R_c_capacity = cfg.bandwidth * log2(1 + gamma_c(k));
     
-    % 对比的是 R_c_total，并允许 1e-3 的浮点宽容度
+    % 瀵规瘮鐨勬槸 R_c_total锛屽苟鍏佽 1e-3 鐨勬诞鐐瑰瀹瑰害
     if R_c_capacity >= R_c_total - 1e-3 
-        gamma_sem(k) = gamma_c(k) + gamma_p(k); % SIC 成功
+        gamma_sem(k) = gamma_c(k) + gamma_p(k); % SIC 鎴愬姛
     else
-        % 否则，公共流将无法被剥离，成为毁灭性的残余干扰
+        % 鍚﹀垯锛屽叕鍏辨祦灏嗘棤娉曡鍓ョ锛屾垚涓烘瘉鐏€х殑娈嬩綑骞叉壈
         hk = ch.h_d(:, k);
         l = assign(k);
         if l > 0 && l <= cfg.num_ris
             hk = hk + cfg.ris_gain * ch.G(:, :, l) * (theta_all(:, l) .* ch.H_ris(:, k, l));
         end
-        % 重新计算包含公共流干扰的私有流 SINR
+        % 閲嶆柊璁＄畻鍖呭惈鍏叡娴佸共鎵扮殑绉佹湁娴?SINR
         interf_all_with_c = sum(abs(hk' * V_p).^2) + abs(hk' * v_c)^2;
         interf_private_with_c = interf_all_with_c - abs(hk' * V_p(:, k))^2;
         gamma_sem(k) = abs(hk' * V_p(:, k))^2 / (interf_private_with_c + noise);
@@ -131,6 +130,7 @@ out.gamma_p = gamma_p;
 out.gamma_c = gamma_c;
 out.rate_private_bps = rate_private_bps;
 out.rate_total_bps = rate_total_bps;
+out.user_rate_std = std(rate_total_bps);
 out.xi = xi;
 out.D = D;
 out.T_tx = meta.T_tx;
@@ -140,10 +140,77 @@ out.delay_vio_rate_all = mean(delay_vio_vec);
 out.semantic_vio_rate_all = mean(semantic_vio_vec);
 out.T_tx_mean_all = mean(meta.T_tx); % [Antigravity Fix]
 out.xi_mean_all = mean(xi); % [Antigravity Fix]
+out.semantic_distortion_mean_all = mean(D);
 out.Qd_mean_all = mean(meta.Qd);
 out.Qs_mean_all = mean(meta.Qs);
 out.Qd_vec = meta.Qd(:);
 out.Qs_vec = meta.Qs(:);
+
+% [SPJO 鏈哄埗璇婃柇鍏滃簳] 瀹夊叏鎻愬彇璇婃柇淇℃伅锛岄伩鍏嶄綔鐢ㄥ煙宕╂簝
+out.common_power_ratio_raw = NaN;
+out.common_cap_active = NaN;
+out.common_shaved_power = NaN;
+out.common_cap_target = NaN;
+out.private_first_budget_ratio = NaN;
+out.common_enabled_flag = NaN;
+out.common_marginal_gain_proxy = NaN;
+out.rebalance_triggered_flag = NaN;
+out.common_power_ratio = NaN;
+out.R_c_limit = NaN;
+
+if isfield(sol, 'V') && isfield(sol.V, 'diag')
+    diag_data = sol.V.diag;
+    if isfield(diag_data, 'common_power_ratio_raw')
+        out.common_power_ratio_raw = diag_data.common_power_ratio_raw;
+    end
+    if isfield(diag_data, 'common_cap_active')
+        out.common_cap_active = diag_data.common_cap_active;
+    end
+    if isfield(diag_data, 'common_shaved_power')
+        out.common_shaved_power = diag_data.common_shaved_power;
+    end
+    if isfield(diag_data, 'common_cap_target')
+        out.common_cap_target = diag_data.common_cap_target;
+    end
+    if isfield(diag_data, 'private_first_budget_ratio')
+        out.private_first_budget_ratio = diag_data.private_first_budget_ratio;
+    end
+    if isfield(diag_data, 'common_enabled_flag')
+        out.common_enabled_flag = diag_data.common_enabled_flag;
+    end
+    if isfield(diag_data, 'common_marginal_gain_proxy')
+        out.common_marginal_gain_proxy = diag_data.common_marginal_gain_proxy;
+    end
+    if isfield(diag_data, 'rebalance_triggered_flag')
+        out.rebalance_triggered_flag = diag_data.rebalance_triggered_flag;
+    end
+    if isfield(diag_data, 'common_power_ratio')
+        out.common_power_ratio = diag_data.common_power_ratio;
+    elseif isfield(diag_data, 'common_power_ratio_clipped')
+        out.common_power_ratio = diag_data.common_power_ratio_clipped;
+    end
+    if isfield(diag_data, 'Rc_limit')
+        out.R_c_limit = diag_data.Rc_limit;
+    end
+    
+    % [SPJO Theta 璇婃柇閫忎紶] 纭繚澶栧眰 Python 鑴氭湰鑳芥姄鍙栧埌 H2 璇佹嵁閾?    out.theta_pre_refit_improve = NaN;
+    out.theta_post_refit_improve = NaN;
+    out.theta_refit_swallow_ratio = NaN;
+    out.theta_good_refit_bad_flag = 0;
+    
+    if isfield(diag_data, 'theta_pre_refit_improve')
+        out.theta_pre_refit_improve = diag_data.theta_pre_refit_improve;
+    end
+    if isfield(diag_data, 'theta_post_refit_improve')
+        out.theta_post_refit_improve = diag_data.theta_post_refit_improve;
+    end
+    if isfield(diag_data, 'theta_refit_swallow_ratio')
+        out.theta_refit_swallow_ratio = diag_data.theta_refit_swallow_ratio;
+    end
+    if isfield(diag_data, 'theta_good_refit_bad_flag')
+        out.theta_good_refit_bad_flag = diag_data.theta_good_refit_bad_flag;
+    end
+end
 
 if isfield(sol, 'V') && isfield(sol.V, 'diag')
     out.diag = sol.V.diag;
@@ -203,6 +270,7 @@ if ~isempty(urgent_idx)
     out.urgent_qoe = mean(qoe_vec(urgent_idx));
     out.urgent_delay_violation = mean(out.delay_violation_user(urgent_idx));
     out.urgent_semantic_violation = mean(out.semantic_violation_user(urgent_idx));
+    out.urgent_semantic_distortion = mean(D(urgent_idx));
     out.urgent_T_tx_mean = mean(meta.T_tx(urgent_idx));
 else
     out.urgent_sum_rate = 0;
@@ -210,6 +278,7 @@ else
     out.urgent_qoe = 1;
     out.urgent_delay_violation = 1;
     out.urgent_semantic_violation = 1;
+    out.urgent_semantic_distortion = NaN;
     out.urgent_T_tx_mean = NaN;
 end
 
@@ -217,10 +286,12 @@ if ~isempty(normal_idx)
     out.normal_avg_rate = mean(out.user_rate(normal_idx));
     out.normal_sum_rate = sum(out.user_rate(normal_idx));
     out.normal_qoe = mean(out.qoe_user(normal_idx));
+    out.normal_semantic_distortion = mean(D(normal_idx));
 else
     out.normal_avg_rate = 0;
     out.normal_sum_rate = 0;
     out.normal_qoe = inf;
+    out.normal_semantic_distortion = NaN;
 end
 
 if debug_eval

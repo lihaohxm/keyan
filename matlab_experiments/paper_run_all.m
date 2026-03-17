@@ -20,7 +20,7 @@ addParameter(p, 'seed', 42);
 addParameter(p, 'p_dbw_cdf', -20);
 addParameter(p, 'p_dbw_ablation', -20);
 addParameter(p, 'run_ris_count', true);
-addParameter(p, 'ris_list', [1 2 3 4]);
+addParameter(p, 'ris_list', [8 16 32 48 64 80 96 112 128]);
 addParameter(p, 'p_dbw_ris', -8);
 addParameter(p, 'mc_ris', []);
 parse(p, varargin{:});

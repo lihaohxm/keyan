@@ -211,6 +211,63 @@ saveas(fig, out_path);
 close(fig);
 end
 
+function sanity = update_sanity_bounds(sanity, out, tol_q, ctx)
+q = out.qoe_vec(:);
+qd = out.Qd_vec(:);
+qs = out.Qs_vec(:);
+
+if any(~isfinite(q)) || any(~isfinite(qd)) || any(~isfinite(qs))
+    error('paper_ablation:nonfinite_qoe', 'Non-finite QoE/Qd/Qs at %s', ctx);
+end
+if any(qd < -tol_q)
+    error('paper_ablation:qd_out_of_range', 'Qd out of [0,inf) at %s', ctx);
+end
+if any(qs < -tol_q)
+    error('paper_ablation:qs_out_of_range', 'Qs out of [0,inf) at %s', ctx);
+end
+
+sanity.qoe_min = min(sanity.qoe_min, min(q));
+sanity.qoe_max = max(sanity.qoe_max, max(q));
+sanity.Qd_min = min(sanity.Qd_min, min(qd));
+sanity.Qd_max = max(sanity.Qd_max, max(qd));
+sanity.Qs_min = min(sanity.Qs_min, min(qs));
+sanity.Qs_max = max(sanity.Qs_max, max(qs));
+end
+
+function v = get_rate_vec_bps_compat(out, K)
+if isfield(out, 'rate_vec_bps') && numel(out.rate_vec_bps) == K
+    v = out.rate_vec_bps(:);
+elseif isfield(out, 'rate_total_bps') && numel(out.rate_total_bps) == K
+    v = out.rate_total_bps(:);
+elseif isfield(out, 'sum_rate_bps') && isfinite(out.sum_rate_bps)
+    % Compatibility fallback for legacy outputs without per-user rates.
+    v = (out.sum_rate_bps / max(1, K)) * ones(K, 1);
+else
+    error('paper_ablation:missing_rate_vec', 'Cannot recover per-user rate vector.');
+end
+end
+
+function idx = normalize_index_vector(x, K)
+x = x(:);
+if islogical(x)
+    if numel(x) ~= K
+        error('Index logical mask must be Kx1.');
+    end
+    idx = find(x);
+    return;
+end
+if isnumeric(x) && numel(x) == K
+    xr = round(real(x));
+    if all((xr == 0) | (xr == 1))
+        idx = find(xr > 0);
+        return;
+    end
+end
+idx = unique(round(real(x)));
+idx = idx(isfinite(idx) & idx >= 1 & idx <= K);
+idx = idx(:);
+end
+
 function write_text_file(path_name, txt)
 fid = fopen(path_name, 'w');
 if fid < 0

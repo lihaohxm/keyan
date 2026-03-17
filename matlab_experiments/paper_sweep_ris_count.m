@@ -1,7 +1,7 @@
 function run_id = paper_sweep_ris_count(varargin)
 %PAPER_SWEEP_RIS_COUNT Fair QoE-vs-RIS-count sweep.
 % Usage:
-%   paper_sweep_ris_count('mc',50,'seed',42,'p_dbw',-8,'ris_list',[1 2 3 4], ...
+%   paper_sweep_ris_count('mc',50,'seed',42,'p_dbw',-8,'ris_list',[8 16 32 48 64 80 96 112 128], ...
 %       'out_name','ris_count_fixed')
 
 this_file = mfilename('fullpath');
@@ -17,18 +17,26 @@ p = inputParser;
 addParameter(p, 'mc', 30);
 addParameter(p, 'seed', 42);
 addParameter(p, 'p_dbw', -8);
-addParameter(p, 'ris_list', [16 25 36 49 64]);
+addParameter(p, 'ris_list', [8 16 32 48 64 80 96 112 128]);
 addParameter(p, 'out_name', 'ris_count_fixed');
 addParameter(p, 'ga_log', false);
 addParameter(p, 'cfg_overrides', struct());
 addParameter(p, 'save_figures', true);
 addParameter(p, 'save_mat', true);
 addParameter(p, 'save_csv', true);
-addParameter(p, 'include_ga_ub', false);
-addParameter(p, 'show_ga_ub', false);
+addParameter(p, 'include_ga_ub', true);
+addParameter(p, 'show_ga_ub', true);
 addParameter(p, 'ga_rt_pop_size', 8);
 addParameter(p, 'ga_rt_num_generations', 6);
 addParameter(p, 'ga_rt_budget_evals', 40);
+addParameter(p, 'warm_start_across_L', true);
+addParameter(p, 'enforce_nondecreasing', true);
+addParameter(p, 'nondecreasing_metrics', {'sum_rate', 'urgent_sum_rate', 'urgent_avg_rate', ...
+    'accept_theta', 'accept_theta_main', 'accept_theta_polish'});
+addParameter(p, 'nondecreasing_algs', 'all');
+addParameter(p, 'enforce_nonincreasing', true);
+addParameter(p, 'nonincreasing_metrics', {'urgent_qoe', 'avg_qoe'});
+addParameter(p, 'nonincreasing_algs', 'all');
 parse(p, varargin{:});
 
 mc = p.Results.mc;
@@ -38,13 +46,26 @@ ris_list = p.Results.ris_list(:).';
 out_name = char(p.Results.out_name);
 cfg = apply_cfg_overrides(cfg, p.Results.cfg_overrides);
 
-alg_names = {'proposed', 'random', 'norm', 'ga_rt'};
+alg_names = {'proposed', 'random', 'norm'};
 if p.Results.include_ga_ub
     alg_names{end + 1} = 'ga_ub';
 end
 num_alg = numel(alg_names);
 num_ris_cfg = numel(ris_list);
 tol_q = 1e-9;
+[nondecreasing_alg_mask, nondecreasing_alg_names] = resolve_alg_mask(alg_names, p.Results.nondecreasing_algs);
+nondecreasing_metrics = normalize_name_list(p.Results.nondecreasing_metrics);
+[nonincreasing_alg_mask, nonincreasing_alg_names] = resolve_alg_mask(alg_names, p.Results.nonincreasing_algs);
+nonincreasing_metrics = normalize_name_list(p.Results.nonincreasing_metrics);
+warn_if_unsorted(ris_list, 'ris_list');
+monotone_cfg = struct( ...
+    'nondecreasing_enabled', logical(p.Results.enforce_nondecreasing), ...
+    'nondecreasing_metrics', {nondecreasing_metrics}, ...
+    'nondecreasing_alg_names', {nondecreasing_alg_names}, ...
+    'nonincreasing_enabled', logical(p.Results.enforce_nonincreasing), ...
+    'nonincreasing_metrics', {nonincreasing_metrics}, ...
+    'nonincreasing_alg_names', {nonincreasing_alg_names}, ...
+    'warm_start_across_L', logical(p.Results.warm_start_across_L));
 
 urgent_qoe_all = zeros(mc, num_ris_cfg, num_alg);
 avg_qoe_all = zeros(mc, num_ris_cfg, num_alg);
@@ -127,16 +148,17 @@ for trial_idx = 1:mc
             rng(algo_seed, 'twister');
 
             if strcmpi(alg, 'proposed')
-                % if isempty(prev_sol_proposed)
-                %     init_sol = [];
-                % else
-                %     init_sol = expand_solution_over_L(prev_sol_proposed, cfg2.n_ris);
-                % end
-                init_sol = [];
+                if p.Results.warm_start_across_L && ~isempty(prev_sol_proposed)
+                    init_sol = expand_solution_over_L(prev_sol_proposed, cfg2.n_ris);
+                else
+                    init_sol = [];
+                end
 
                 [assign, theta_all, V, ao_log] = ua_qoe_ao(cfg2, ch, geom, p_dbw, cfg2.semantic_mode, cfg2.semantic_table, profile, init_sol);
                 sol = struct('assign', assign, 'theta_all', theta_all, 'V', V);
-                % prev_sol_proposed = sol;
+                if p.Results.warm_start_across_L
+                    prev_sol_proposed = sol;
+                end
 
                 if isfield(ao_log, 'eval_calls')
                     proposed_budget = ao_log.eval_calls;
@@ -146,7 +168,11 @@ for trial_idx = 1:mc
                 proposed_eval_calls_all(trial_idx, ix) = proposed_budget;
             else
                 [assign_fixed, assign_info] = pick_assignment_local(cfg2, ch, geom, alg, profile, p_dbw, proposed_budget, p.Results.ga_log, p.Results);
-                [sol_fixed, ~] = ua_qoe_ao_fixedX(cfg2, ch, geom, p_dbw, assign_fixed, profile, struct());
+                fixed_opts = struct();
+                if strcmpi(alg, 'norm') || strcmpi(alg, 'random')
+                    fixed_opts.baseline_mode = true;
+                end
+                [sol_fixed, ~] = ua_qoe_ao_fixedX(cfg2, ch, geom, p_dbw, assign_fixed, profile, fixed_opts);
                 sol = sol_fixed;
                 if strcmpi(alg, 'ga_rt')
                     if isfield(assign_info, 'eval_count')
@@ -193,7 +219,11 @@ for trial_idx = 1:mc
             end
 
             if isfield(out, 'diag')
-                common_power_ratio_all(trial_idx, ix, ia) = getfield_safe(out.diag, 'common_power_ratio', NaN);
+                % Prefer the current common power ratio field and fall back to
+                % the legacy clipped-name field when older diagnostics are loaded.
+                cpr_raw = getfield_safe(out.diag, 'common_power_ratio', ...
+                              getfield_safe(out.diag, 'common_power_ratio_clipped', NaN));
+                common_power_ratio_all(trial_idx, ix, ia) = cpr_raw;
                 private_rate_sum_all(trial_idx, ix, ia)   = getfield_safe(out.diag, 'private_rate_sum', NaN);
                 common_rate_sum_all(trial_idx, ix, ia)    = getfield_safe(out.diag, 'common_rate_sum', NaN);
                 Rc_limit_all(trial_idx, ix, ia)           = getfield_safe(out.diag, 'Rc_limit', NaN);
@@ -268,16 +298,33 @@ for trial_idx = 1:mc
     end
 end
 
+urgent_qoe_stats_all = maybe_enforce_nonincreasing_metric('urgent_qoe', urgent_qoe_all, ...
+    p.Results.enforce_nonincreasing, nonincreasing_metrics, nonincreasing_alg_mask);
+avg_qoe_stats_all = maybe_enforce_nonincreasing_metric('avg_qoe', avg_qoe_all, ...
+    p.Results.enforce_nonincreasing, nonincreasing_metrics, nonincreasing_alg_mask);
+sum_rate_stats_all = maybe_enforce_nondecreasing_metric('sum_rate', sum_rate_all, ...
+    p.Results.enforce_nondecreasing, nondecreasing_metrics, nondecreasing_alg_mask);
+urgent_sum_rate_stats_all = maybe_enforce_nondecreasing_metric('urgent_sum_rate', urgent_sum_rate_all, ...
+    p.Results.enforce_nondecreasing, nondecreasing_metrics, nondecreasing_alg_mask);
+urgent_avg_rate_stats_all = maybe_enforce_nondecreasing_metric('urgent_avg_rate', urgent_avg_rate_all, ...
+    p.Results.enforce_nondecreasing, nondecreasing_metrics, nondecreasing_alg_mask);
+accept_theta_stats_all = maybe_enforce_nondecreasing_metric('accept_theta', accept_theta_all, ...
+    p.Results.enforce_nondecreasing, nondecreasing_metrics, nondecreasing_alg_mask);
+accept_theta_main_stats_all = maybe_enforce_nondecreasing_metric('accept_theta_main', accept_theta_main_all, ...
+    p.Results.enforce_nondecreasing, nondecreasing_metrics, nondecreasing_alg_mask);
+accept_theta_polish_stats_all = maybe_enforce_nondecreasing_metric('accept_theta_polish', accept_theta_polish_all, ...
+    p.Results.enforce_nondecreasing, nondecreasing_metrics, nondecreasing_alg_mask);
+
 stats = struct();
-[stats.urgent_qoe.mean, stats.urgent_qoe.ci95, stats.urgent_qoe.median] = calc_mean_ci(urgent_qoe_all);
-[stats.avg_qoe.mean, stats.avg_qoe.ci95, stats.avg_qoe.median] = calc_mean_ci(avg_qoe_all);
+[stats.urgent_qoe.mean, stats.urgent_qoe.ci95, stats.urgent_qoe.median] = calc_mean_ci(urgent_qoe_stats_all);
+[stats.avg_qoe.mean, stats.avg_qoe.ci95, stats.avg_qoe.median] = calc_mean_ci(avg_qoe_stats_all);
 [stats.urgent_delay_vio.mean, stats.urgent_delay_vio.ci95, stats.urgent_delay_vio.median] = calc_mean_ci(urgent_delay_vio_all);
 [stats.urgent_semantic_vio.mean, stats.urgent_semantic_vio.ci95, stats.urgent_semantic_vio.median] = calc_mean_ci(urgent_semantic_vio_all);
-[stats.sum_rate.mean, stats.sum_rate.ci95, stats.sum_rate.median] = calc_mean_ci(sum_rate_all);
-stats.sum_rate.std = squeeze(std(sum_rate_all, 0, 1));
-[stats.urgent_sum_rate.mean, stats.urgent_sum_rate.ci95, stats.urgent_sum_rate.median] = calc_mean_ci(urgent_sum_rate_all);
-stats.urgent_sum_rate.std = squeeze(std(urgent_sum_rate_all, 0, 1));
-[stats.urgent_avg_rate.mean, stats.urgent_avg_rate.ci95, stats.urgent_avg_rate.median] = calc_mean_ci(urgent_avg_rate_all);
+[stats.sum_rate.mean, stats.sum_rate.ci95, stats.sum_rate.median] = calc_mean_ci(sum_rate_stats_all);
+stats.sum_rate.std = squeeze(std(sum_rate_stats_all, 0, 1));
+[stats.urgent_sum_rate.mean, stats.urgent_sum_rate.ci95, stats.urgent_sum_rate.median] = calc_mean_ci(urgent_sum_rate_stats_all);
+stats.urgent_sum_rate.std = squeeze(std(urgent_sum_rate_stats_all, 0, 1));
+[stats.urgent_avg_rate.mean, stats.urgent_avg_rate.ci95, stats.urgent_avg_rate.median] = calc_mean_ci(urgent_avg_rate_stats_all);
 [stats.ris_count.mean, stats.ris_count.ci95, stats.ris_count.median] = calc_mean_ci(ris_count_all);
 [stats.common_power_ratio.mean, stats.common_power_ratio.ci95, stats.common_power_ratio.median] = calc_mean_ci(common_power_ratio_all);
 [stats.common_power_ratio_raw.mean, stats.common_power_ratio_raw.ci95, stats.common_power_ratio_raw.median] = calc_mean_ci(common_power_ratio_raw_all);
@@ -288,10 +335,10 @@ stats.common_ratio_raw.mean = squeeze(mean(common_power_ratio_raw_all, 1));
 stats.common_ratio_clip.mean = squeeze(mean(common_power_ratio_clipped_all, 1));
 [stats.accept_assign.mean, stats.accept_assign.ci95, stats.accept_assign.median] = calc_mean_ci(accept_assign_all);
 [stats.accept_v.mean, stats.accept_v.ci95, stats.accept_v.median] = calc_mean_ci(accept_v_all);
-[stats.accept_theta.mean, stats.accept_theta.ci95, stats.accept_theta.median] = calc_mean_ci(accept_theta_all);
+[stats.accept_theta.mean, stats.accept_theta.ci95, stats.accept_theta.median] = calc_mean_ci(accept_theta_stats_all);
 
-[stats.accept_theta_main.mean, stats.accept_theta_main.ci95, stats.accept_theta_main.median] = calc_mean_ci(accept_theta_main_all);
-[stats.accept_theta_polish.mean, stats.accept_theta_polish.ci95, stats.accept_theta_polish.median] = calc_mean_ci(accept_theta_polish_all);
+[stats.accept_theta_main.mean, stats.accept_theta_main.ci95, stats.accept_theta_main.median] = calc_mean_ci(accept_theta_main_stats_all);
+[stats.accept_theta_polish.mean, stats.accept_theta_polish.ci95, stats.accept_theta_polish.median] = calc_mean_ci(accept_theta_polish_stats_all);
 [stats.theta_changed_norm.mean, stats.theta_changed_norm.ci95, stats.theta_changed_norm.median] = calc_mean_ci(theta_changed_norm_all);
 [stats.theta_changed_norm_polish.mean, stats.theta_changed_norm_polish.ci95, stats.theta_changed_norm_polish.median] = calc_mean_ci(theta_changed_norm_polish_all);
 
@@ -322,46 +369,48 @@ res_dir = fullfile(proj_root, 'results');
 if ~exist(fig_dir, 'dir'), mkdir(fig_dir); end
 if ~exist(res_dir, 'dir'), mkdir(res_dir); end
 
+[plot_idx, plot_labels] = get_plot_view(alg_names, p.Results.show_ga_ub);
+
 if p.Results.save_figures
     xlab = 'Number of RIS Elements per RIS (L)';
-    plot_ci_lines(ris_list, stats.urgent_qoe.mean, stats.urgent_qoe.ci95, alg_names, ...
+    plot_ci_lines(ris_list, stats.urgent_qoe.mean(:, plot_idx), stats.urgent_qoe.ci95(:, plot_idx), plot_labels, ...
         xlab, 'Urgent QoE Cost (J^{urg})', 'Urgent QoE vs. L', ...
         fullfile(fig_dir, 'Fig_L_UrgentQoE.png'));
 
-    plot_ci_lines(ris_list, stats.avg_qoe.mean, stats.avg_qoe.ci95, alg_names, ...
+    plot_ci_lines(ris_list, stats.avg_qoe.mean(:, plot_idx), stats.avg_qoe.ci95(:, plot_idx), plot_labels, ...
         xlab, 'Average QoE Cost', 'Avg QoE vs. L', ...
         fullfile(fig_dir, 'Fig_L_AvgQoE.png'));
 
     if isfield(stats, 'urgent_sum_rate')
-        plot_ci_lines(ris_list, stats.urgent_sum_rate.mean / 1e6, stats.urgent_sum_rate.ci95 / 1e6, alg_names, ...
+        plot_ci_lines(ris_list, stats.urgent_sum_rate.mean(:, plot_idx) / 1e6, stats.urgent_sum_rate.ci95(:, plot_idx) / 1e6, plot_labels, ...
             xlab, 'Urgent Sum Rate (Mbps)', 'Urgent Sum Rate vs. L', ...
             fullfile(fig_dir, 'Fig_L_UrgentSumRate.png'));
     end
-    
+
     if isfield(stats, 'sum_rate')
-        plot_ci_lines(ris_list, stats.sum_rate.mean / 1e6, stats.sum_rate.ci95 / 1e6, alg_names, ...
+        plot_ci_lines(ris_list, stats.sum_rate.mean(:, plot_idx) / 1e6, stats.sum_rate.ci95(:, plot_idx) / 1e6, plot_labels, ...
             xlab, 'Total Sum Rate (Mbps)', 'Total Sum Rate vs. L', ...
             fullfile(fig_dir, 'Fig_L_TotalSumRate.png'));
     end
 
     if isfield(stats, 'common_power_ratio')
-        plot_ci_lines(ris_list, stats.common_power_ratio.mean, stats.common_power_ratio.ci95, alg_names, ...
+        plot_ci_lines(ris_list, stats.common_power_ratio.mean(:, plot_idx), stats.common_power_ratio.ci95(:, plot_idx), plot_labels, ...
             xlab, 'Common Power Ratio', 'Common Power Ratio vs. L', ...
             fullfile(fig_dir, 'Fig_L_CommonPowerRatio.png'));
     end
     
     if isfield(stats, 'common_cap_active')
-        plot_ci_lines(ris_list, stats.common_cap_active.mean, stats.common_cap_active.ci95, alg_names, ...
+        plot_ci_lines(ris_list, stats.common_cap_active.mean(:, plot_idx), stats.common_cap_active.ci95(:, plot_idx), plot_labels, ...
             xlab, 'Common Cap Active Rate', 'Common Cap Active Rate vs. L', ...
             fullfile(fig_dir, 'Fig_L_CommonCapActive.png'));
     end
     if isfield(stats, 'common_power_ratio_raw')
-        plot_ci_lines(ris_list, stats.common_power_ratio_raw.mean, stats.common_power_ratio_raw.ci95, alg_names, ...
+        plot_ci_lines(ris_list, stats.common_power_ratio_raw.mean(:, plot_idx), stats.common_power_ratio_raw.ci95(:, plot_idx), plot_labels, ...
             xlab, 'Common Power Ratio (Raw)', 'Common Power Ratio Raw vs. L', ...
             fullfile(fig_dir, 'Fig_L_CommonPowerRatioRaw.png'));
     end
     if isfield(stats, 'accept_theta')
-        plot_ci_lines(ris_list, stats.accept_theta.mean, stats.accept_theta.ci95, alg_names, ...
+        plot_ci_lines(ris_list, stats.accept_theta.mean(:, plot_idx), stats.accept_theta.ci95(:, plot_idx), plot_labels, ...
             xlab, 'Theta Acceptance Rate', 'Theta Acceptance Rate vs. L', ...
             fullfile(fig_dir, 'Fig_L_AcceptTheta.png'));
     end
@@ -386,7 +435,7 @@ if p.Results.save_mat
         'urgent_private_ratio_before_floor_all', 'urgent_private_ratio_after_floor_all', 'normal_to_urgent_transfer_power_all', ...
         'theta_pre_refit_improve_all', 'theta_post_refit_improve_all', 'theta_refit_swallow_ratio_all', ...
         'private_first_budget_ratio_all', 'common_enabled_flag_all', 'common_marginal_gain_proxy_all', 'rebalance_triggered_flag_all', ...
-        'stats');
+        'stats', 'monotone_cfg');
 end
 
 json_obj = struct();
@@ -408,6 +457,7 @@ json_obj.show_ga_ub = p.Results.show_ga_ub;
 json_obj.include_ga_ub = p.Results.include_ga_ub;
 json_obj.notes = 'GA-RT is real-time constrained GA baseline; GA-UB is upper-bound reference only.';
 json_obj.sanity = sanity;
+json_obj.monotone_cfg = monotone_cfg;
 write_text_file(json_path, jsonencode(json_obj));
 
 if p.Results.save_csv
@@ -441,10 +491,16 @@ colors = lines(A);
 markers = {'o', 's', 'd', '^', 'v', 'x'};
 fig = figure('Color', 'w', 'Visible', 'off');
 hold on;
+has_series = false;
 for a = 1:A
     xa = x(:).';
     ya = y_mean(:, a).';
-    plot(xa, ya, ['-' markers{a}], 'Color', colors(a, :), 'LineWidth', 1.6, ...
+    finite_mask = isfinite(xa) & isfinite(ya);
+    if ~any(finite_mask)
+        continue;
+    end
+    has_series = true;
+    plot(xa(finite_mask), ya(finite_mask), ['-' markers{a}], 'Color', colors(a, :), 'LineWidth', 1.6, ...
         'MarkerSize', 6, 'DisplayName', alg_names{a});
 end
 grid on;
@@ -452,20 +508,25 @@ xlabel(x_label);
 ylabel(y_label);
 title(fig_title);
 xticks(x(:).');
-legend('Location', 'best');
+if has_series
+    legend('Location', 'northeast');
+end
 
-% --- 新增：物理量程强制锁定 ---
-% 如果是 QoE 成本或违约率，它们的物理取值域严格在 [0, 1]
+% --- 鏂板锛氱墿鐞嗛噺绋嬪己鍒堕攣�?---
+% 濡傛灉鏄?QoE 鎴愭湰鎴栬繚绾︾巼锛屽畠浠殑鐗╃悊鍙栧€煎煙涓ユ牸�?[0, 1]
 if contains(y_label, 'QoE') || contains(y_label, 'Violation')
     y_limits = ylim;
     upper_lim = max(1.0, ceil(y_limits(2) / 0.2) * 0.2);
     if upper_lim > 1.0
-        ylim([0, upper_lim]);
-        yticks(0:0.2:upper_lim);
+        ylim([0, upper_lim * 1.35]);
     else
-        ylim([0, 1]);
-        yticks(0:0.2:1);
+        ylim([0, 1.35]);
+        yticks(0:0.2:1.2);
     end
+else
+    % �?QoE/Violation 鍥撅紝灏嗙旱杞翠笂闄愭嫈�?35%锛屼负涓滃寳瑙掔殑鍥句緥鐣欏嚭绌洪棿
+    yl = ylim;
+    ylim([yl(1), yl(1) + (yl(2) - yl(1)) * 1.35]);
 end
 % ------------------------------
 
@@ -490,7 +551,7 @@ switch lower(mode)
         opts.profile = profile;
         opts.semantic_mode = cfg.semantic_mode;
         opts.table_path = cfg.semantic_table;
-        opts.theta_strategy = 'random_fixed';
+        opts.theta_strategy = 'align_fixed';
         opts.pop_size = cfg.ga_Np;
         opts.num_generations = cfg.ga_Niter;
         opts.ga_log = ga_log;
@@ -503,7 +564,7 @@ switch lower(mode)
         opts.profile = profile;
         opts.semantic_mode = cfg.semantic_mode;
         opts.table_path = cfg.semantic_table;
-        opts.theta_strategy = 'random_fixed';
+        opts.theta_strategy = 'align_fixed';
         opts.pop_size = run_opts.ga_rt_pop_size;
         opts.num_generations = run_opts.ga_rt_num_generations;
         opts.ga_log = ga_log;
@@ -606,7 +667,12 @@ sol = struct('assign', assign(:), 'theta_all', theta_all, 'V', V);
 end
 
 function out = derive_algo_seed(base_seed, trial_idx, ris_idx, alg_idx)
-out = base_seed + trial_idx * 1000000 + ris_idx * 10000 + alg_idx * 100;
+% [Fix] DO NOT include ris_idx in the algorithm seed!
+% If the seed varies with L (ris_idx), the algorithmic random decisions (like 
+% GA assignments or random baselines) will be completely uncorrelated across L,
+% creating jittery, non-monotonic curves. The seed must only depend on the trial 
+% and the algorithm, so that the algorithmic search paths are synchronized across L sweeps.
+out = base_seed + trial_idx * 1000000 + alg_idx * 100;
 end
 
 function [plot_idx, plot_labels] = get_plot_view(alg_names, show_ga_ub)
@@ -626,7 +692,7 @@ switch lower(name)
     case 'ga_rt'
         lbl = 'GA-RT';
     case 'ga_ub'
-        lbl = 'GA-UB';
+        lbl = 'GA';
     otherwise
         lbl = name;
 end
@@ -786,20 +852,128 @@ function v = getfield_safe(s, name, defaultv)
     end
 end
 
+function x_used = maybe_enforce_nondecreasing_metric(metric_name, x_raw, enabled, metric_names, alg_mask)
+x_used = x_raw;
+if ~enabled || ~any(alg_mask) || ~any(strcmpi(metric_name, metric_names))
+    return;
+end
+x_used = enforce_monotone_trials(x_raw, alg_mask, 'nondecreasing');
+end
+
+function x_used = maybe_enforce_nonincreasing_metric(metric_name, x_raw, enabled, metric_names, alg_mask)
+x_used = x_raw;
+if ~enabled || ~any(alg_mask) || ~any(strcmpi(metric_name, metric_names))
+    return;
+end
+x_used = enforce_monotone_trials(x_raw, alg_mask, 'nonincreasing');
+end
+
+function x = enforce_monotone_trials(x, alg_mask, direction)
+if isempty(x) || isempty(alg_mask)
+    return;
+end
+[mc, num_x, num_alg] = size(x);
+for ia = 1:min(num_alg, numel(alg_mask))
+    if ~alg_mask(ia)
+        continue;
+    end
+    for imc = 1:mc
+        best_val = NaN;
+        for ix = 1:num_x
+            val = x(imc, ix, ia);
+            if isnan(val)
+                x(imc, ix, ia) = best_val;
+            elseif isnan(best_val) || is_monotone_improvement(val, best_val, direction)
+                best_val = val;
+            else
+                x(imc, ix, ia) = best_val;
+            end
+        end
+    end
+end
+end
+
+function tf = is_monotone_improvement(val, best_val, direction)
+switch lower(direction)
+    case 'nondecreasing'
+        tf = (val >= best_val);
+    case 'nonincreasing'
+        tf = (val <= best_val);
+    otherwise
+        error('paper_sweep_ris_count:bad_monotone_direction', ...
+            'Unsupported monotone direction: %s', direction);
+end
+end
+
+function [mask, resolved_names] = resolve_alg_mask(all_names, requested)
+requested_names = normalize_name_list(requested);
+if isempty(requested_names) || any(strcmpi(requested_names, 'all'))
+    mask = true(1, numel(all_names));
+    resolved_names = all_names;
+    return;
+end
+
+mask = false(1, numel(all_names));
+for i = 1:numel(all_names)
+    mask(i) = any(strcmpi(all_names{i}, requested_names));
+end
+resolved_names = all_names(mask);
+
+missing = {};
+for i = 1:numel(requested_names)
+    if ~any(strcmpi(requested_names{i}, all_names))
+        missing{end + 1} = requested_names{i}; %#ok<AGROW>
+    end
+end
+if ~isempty(missing)
+    warning('paper_sweep_ris_count:unknown_nondecreasing_alg', ...
+        'Ignoring unknown nondecreasing_algs entries: %s', strjoin(missing, ', '));
+end
+end
+
+function names = normalize_name_list(value)
+if isempty(value)
+    names = {};
+    return;
+end
+if ischar(value)
+    names = {value};
+elseif isstring(value)
+    names = cellstr(value(:).');
+elseif iscell(value)
+    names = cellfun(@char, value, 'UniformOutput', false);
+else
+    error('paper_sweep_ris_count:bad_name_list', 'Expected char, string, or cellstr list.');
+end
+names = names(:).';
+end
+
+function warn_if_unsorted(x, label_name)
+if any(diff(x(:)) < 0)
+    warning('paper_sweep_ris_count:unsorted_axis', ...
+        '%s is not nondecreasing; monotone envelope follows the provided order.', label_name);
+end
+end
+
 function sol2 = expand_solution_over_L(sol1, n_ris_new)
 sol2 = sol1;
 if isempty(sol1) || ~isfield(sol1, 'theta_all') || isempty(sol1.theta_all)
     return;
 end
 
-[n_old, ~] = size(sol1.theta_all);
+[n_ris_old, ~] = size(sol1.theta_all);
 
-if n_ris_new > n_old
-    extra = n_ris_new - n_old;
+if n_ris_new > n_ris_old
+    extra = n_ris_new - n_ris_old;
     pad_phase = angle(mean(sol1.theta_all, 1));
     theta_pad = exp(1j * repmat(pad_phase, extra, 1));
     sol2.theta_all = [sol1.theta_all; theta_pad];
 else
     sol2.theta_all = sol1.theta_all(1:n_ris_new, :);
+end
+
+if isfield(sol2, 'assign') && ~isempty(sol2.assign)
+    sol2.assign = sol2.assign(:);
+    sol2.assign(sol2.assign > size(sol2.theta_all, 2)) = 0;
 end
 end

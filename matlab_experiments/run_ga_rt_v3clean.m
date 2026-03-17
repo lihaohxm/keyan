@@ -229,7 +229,7 @@ switch lower(alg)
         opts.profile = profile;
         opts.semantic_mode = cfg.semantic_mode;
         opts.table_path = cfg.semantic_table;
-        opts.theta_strategy = 'random_fixed';
+        opts.theta_strategy = 'align_fixed';
         opts.pop_size = 8;
         opts.num_generations = 6;
         target = 40;
@@ -252,7 +252,7 @@ switch lower(alg)
         opts.profile = profile;
         opts.semantic_mode = cfg.semantic_mode;
         opts.table_path = cfg.semantic_table;
-        opts.theta_strategy = 'random_fixed';
+        opts.theta_strategy = 'align_fixed';
         opts.pop_size = cfg.ga_Np;
         opts.num_generations = cfg.ga_Niter;
         if ~isempty(warm_assign)

@@ -1,9 +1,7 @@
-﻿function geom = geometry(cfg, seed)
+function geom = geometry(cfg, seed)
 %GEOMETRY Scenario geometry generator.
-%
-% Group source policy:
-% - geometry only tags user types in geom.user_type
-% - profile construction must normalize/use geom.user_type and store profile.groups.*
+% Geometry is task-agnostic: urgency is assigned later from task pressure
+% and a pre-scheduling channel-quality proxy.
 
 if nargin < 2
     seed = 1;
@@ -12,41 +10,40 @@ end
 rng(seed, 'twister');
 
 bs = cfg.bs_positions;
+if numel(bs) < 2
+    error('cfg.bs_positions must contain at least two coordinates.');
+end
+bs = bs(1:2);
+
 num_users = cfg.num_users;
 num_ris = cfg.num_ris;
-num_urgent = min(num_users, max(0, round(get_field(cfg, 'num_urgent', 4))));
-num_normal = max(0, num_users - num_urgent);
 
-ue = zeros(num_users, 2);
-ris = zeros(num_ris, 2);
+user_r_min = get_field(cfg, 'user_radius_min', 30);
+user_r_max = get_field(cfg, 'user_radius_max', 180);
+ris_r_min = get_field(cfg, 'ris_radius_min', 70);
+ris_r_max = get_field(cfg, 'ris_radius_max', 110);
 
-% Urgent users: farther and concentrated sector.
-urgent_sector = [0, pi/4];
-for k = 1:num_urgent
-    r = 120 + 60 * rand();
-    ang = urgent_sector(1) + (urgent_sector(2) - urgent_sector(1)) * rand();
-    ue(k, :) = bs + r * [cos(ang) sin(ang)];
-end
-
-% Normal users: closer and isotropic.
-for k = (num_urgent + 1):num_users
-    r = 30 + 40 * rand();
-    ang = 2 * pi * rand();
-    ue(k, :) = bs + r * [cos(ang) sin(ang)];
-end
-
-% RIS deployment towards urgent sector.
-for l = 1:num_ris
-    r_dist = 80 + 20 * rand();
-    ang = urgent_sector(1) + (urgent_sector(2) - urgent_sector(1)) * rand();
-    ris(l, :) = bs + r_dist * [cos(ang) sin(ang)];
-end
+ue = sample_annulus_points(bs, num_users, user_r_min, user_r_max);
+ris = sample_annulus_points(bs, num_ris, ris_r_min, ris_r_max);
 
 geom.bs = bs;
 geom.ue = ue;
 geom.ris = ris;
+geom.seed = seed;
+geom.user_dist_from_bs = sqrt(sum((ue - bs).^2, 2));
 geom.ris_dist_from_bs = sqrt(sum((ris - bs).^2, 2));
-geom.user_type = [repmat("urgent", num_urgent, 1); repmat("normal", num_normal, 1)];
+geom.user_angle_from_bs = atan2(ue(:, 2) - bs(2), ue(:, 1) - bs(1));
+geom.ris_angle_from_bs = atan2(ris(:, 2) - bs(2), ris(:, 1) - bs(1));
+geom.user_type = repmat("generic", num_users, 1);
+end
+
+function pts = sample_annulus_points(center, count, r_min, r_max)
+pts = zeros(count, 2);
+for idx = 1:count
+    radius = r_min + (r_max - r_min) * rand();
+    angle = 2 * pi * rand();
+    pts(idx, :) = center + radius * [cos(angle), sin(angle)];
+end
 end
 
 function v = get_field(s, f, d)

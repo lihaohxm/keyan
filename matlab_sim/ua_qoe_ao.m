@@ -18,6 +18,7 @@ n_ris = cfg.n_ris;
 urgent_idx_arr = get_urgent_indices_from_profile(profile, num_users);
 is_urgent = false(num_users, 1);
 is_urgent(urgent_idx_arr) = true;
+cfg = attach_profile_context_to_cfg(cfg, profile);
 
 simple_beam = get_cfg_or_default(cfg, 'ao_simple_beam', false);
 
@@ -145,7 +146,7 @@ for outer = 1:max_outer_iter
         sol_try_a = struct('assign', assign_cand, 'theta_all', theta_try, 'V', V_try);
         out_try_a = evaluate_system_rsma(cfg, ch, geom, sol_try_a, profile, eval_opts);
         eval_calls = eval_calls + 1;
-        if accept_candidate_relaxed(out_try_a, out_prev, cfg, 'A')
+        if accept_candidate_relaxed_final(out_try_a, out_prev, cfg, 'A')
             assign = assign_cand;
             theta_all = theta_try;  % 同步更新相位
             V = V_try;              % 同步更新预编码器
@@ -198,7 +199,7 @@ for outer = 1:max_outer_iter
         eval_calls = eval_calls + 1;
 
         % Direct Update (with Monotonicity Guard)
-        accept_v = accept_candidate_relaxed(out_cand_v, out_prev, cfg, 'V');
+        accept_v = accept_candidate_relaxed_final(out_cand_v, out_prev, cfg, 'V');
 
         if accept_v
             V = V_cand;
@@ -281,6 +282,13 @@ for outer = 1:max_outer_iter
             sol_pre_refit = struct('assign', assign, 'theta_all', theta_tmp, 'V', V);
             out_pre_refit = evaluate_system_rsma(cfg, ch, geom, sol_pre_refit, profile, eval_opts);
             eval_calls = eval_calls + 1;
+
+            pre_refit_qoe_degradation = out_pre_refit.urgent_qoe - out_prev.urgent_qoe;
+            max_pre_refit_urgent_qoe_drop = get_cfg_or_default(cfg, ...
+                'theta_pre_refit_guard_urgent_qoe_drop', inf);
+            if pre_refit_qoe_degradation > max_pre_refit_urgent_qoe_drop
+                continue;
+            end
             
             % Compute pre-refit improvement
             metric_prev = get_compare_cost(out_prev);
@@ -325,7 +333,7 @@ for outer = 1:max_outer_iter
 
             eval_calls = eval_calls + 1;
             
-            [acc_tmp, rej_reason_tmp] = accept_candidate_relaxed(out_tmp_t, out_prev, cfg, 'T');
+            [acc_tmp, rej_reason_tmp] = accept_candidate_relaxed_final(out_tmp_t, out_prev, cfg, 'T');
             if get_cfg_or_default(cfg, 'diag_h1h2_log', false)
                 gain_post_refit = out_prev.avg_qoe - out_tmp_t.avg_qoe;
                 if acc_tmp
@@ -337,7 +345,7 @@ for outer = 1:max_outer_iter
                     s, num_theta_starts, surrogate_gain, gain_pre_refit, gain_post_refit, rej_reason_log);
             end
 
-            if isempty(best_cand_out) || accept_candidate_relaxed(out_tmp_t, best_cand_out, cfg, 'T')
+            if isempty(best_cand_out) || accept_candidate_relaxed_final(out_tmp_t, best_cand_out, cfg, 'T')
                 best_cand_out = out_tmp_t;
                 best_cand_theta = theta_tmp;
                 best_cand_V = V_refit;
@@ -364,7 +372,7 @@ for outer = 1:max_outer_iter
         out_cand_t.diag.theta_good_refit_bad_flag = theta_good_refit_bad_flag_best;
 
         % Direct Update (with Monotonicity Guard)
-        accept_t = accept_candidate_relaxed(out_cand_t, out_prev, cfg, 'T');
+        accept_t = accept_candidate_relaxed_final(out_cand_t, out_prev, cfg, 'T');
 
         if accept_t
             outer_accept_t_main = true;
@@ -427,7 +435,7 @@ for outer = 1:max_outer_iter
             out_best = out_prev;
             theta_before_polish = theta_all;
             out_before_polish = out_prev;
-            polish_rounds = get_cfg_or_default(cfg, 'theta_polish_rounds', 2);
+            polish_rounds = get_cfg_or_default(cfg, 'theta_polish_rounds', 0);
             tol_rate_p = get_cfg_or_default(cfg, 'theta_polish_tol_rate', 5e5);
             tol_uq_p = get_cfg_or_default(cfg, 'theta_polish_tol_uq', 0.01);
             
@@ -599,6 +607,8 @@ end
 end
 
 function q_weights = build_excess_weights(cfg, out_prev, profile)
+q_weights = build_task_priority_weights(cfg, out_prev, profile, struct('use_gradient_term', true));
+return;
 % QoE / WMMSE weights with urgent-first emphasis
 
     K = cfg.num_users;
@@ -895,6 +905,46 @@ elseif out_new.total_sum_rate < out_old.total_sum_rate - tol_tr_w
 end
 end
 
+function [tf, reason] = accept_candidate_relaxed_final(out_new, out_old, cfg, step_type)
+reason = 'cost_not_improved';
+new_cost = get_compare_cost(out_new);
+old_cost = get_compare_cost(out_old);
+cost_tol = get_cfg_or_default(cfg, 'ao_cost_tie_tol', 1e-6);
+rate_tol = get_cfg_or_default(cfg, 'ao_tie_rate_tol_bps', 1e4);
+sem_tol = get_cfg_or_default(cfg, 'ao_tie_semvio_tol', 1e-4);
+urgent_qoe_tol = get_cfg_or_default(cfg, 'ao_tie_urgent_qoe_tol', 1e-6);
+
+if new_cost < old_cost - cost_tol
+    tf = true;
+    reason = 'cost_improved';
+elseif abs(new_cost - old_cost) <= cost_tol
+    new_sum_rate = get_metric_or_default(out_new, 'sum_rate_bps', ...
+        get_metric_or_default(out_new, 'total_sum_rate', -inf));
+    old_sum_rate = get_metric_or_default(out_old, 'sum_rate_bps', ...
+        get_metric_or_default(out_old, 'total_sum_rate', -inf));
+    new_sem_vio = get_metric_or_default(out_new, 'urgent_semantic_violation', inf);
+    old_sem_vio = get_metric_or_default(out_old, 'urgent_semantic_violation', inf);
+    new_urgent_qoe = get_metric_or_default(out_new, 'urgent_qoe', inf);
+    old_urgent_qoe = get_metric_or_default(out_old, 'urgent_qoe', inf);
+
+    if isfinite(new_sum_rate) && isfinite(old_sum_rate) && new_sum_rate > old_sum_rate + rate_tol
+        tf = true;
+        reason = 'cost_tie_higher_rate';
+    elseif isfinite(new_sem_vio) && isfinite(old_sem_vio) && new_sem_vio < old_sem_vio - sem_tol
+        tf = true;
+        reason = 'cost_tie_lower_semantic_violation';
+    elseif isfinite(new_urgent_qoe) && isfinite(old_urgent_qoe) && new_urgent_qoe < old_urgent_qoe - urgent_qoe_tol
+        tf = true;
+        reason = 'cost_tie_lower_urgent_qoe';
+    else
+        tf = false;
+        reason = 'cost_tie_no_structural_gain';
+    end
+else
+    tf = false;
+end
+end
+
 function cost_v = get_compare_cost(out_s)
 if isfield(out_s, 'composite_cost') && ~isempty(out_s.composite_cost) && isfinite(out_s.composite_cost)
     cost_v = out_s.composite_cost;
@@ -902,6 +952,14 @@ elseif isfield(out_s, 'avg_qoe_pure') && ~isempty(out_s.avg_qoe_pure) && isfinit
     cost_v = out_s.avg_qoe_pure;
 else
     cost_v = out_s.avg_qoe;
+end
+end
+
+function value = get_metric_or_default(s, name, default_value)
+if isstruct(s) && isfield(s, name) && ~isempty(s.(name))
+    value = s.(name);
+else
+    value = default_value;
 end
 end
 
@@ -964,7 +1022,7 @@ if ~enable_pre_refit && ~enable_protected && ~enable_layered
     sol_cand = struct('assign', assign, 'theta_all', theta_cand, 'V', V_refit);
     out_cand = evaluate_system_rsma(cfg, ch, geom, sol_cand, profile, eval_opts);
     
-    [accept, ~] = accept_candidate_relaxed(out_cand, out_prev, cfg, 'T');
+    [accept, ~] = accept_candidate_relaxed_final(out_cand, out_prev, cfg, 'T');
     
     if accept
         theta_out = theta_cand;
@@ -1067,7 +1125,7 @@ if enable_layered
     eval_info.layer3_info = layer3_info;
 else
     % Use standard acceptance criteria
-    [accept, ~] = accept_candidate_relaxed(out_post, out_prev, cfg, 'T');
+    [accept, ~] = accept_candidate_relaxed_final(out_post, out_prev, cfg, 'T');
     eval_info.layer3_pass = accept;
 end
 
